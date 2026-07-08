@@ -27,7 +27,7 @@ pnpm init-admin
 
 ```env
 CURSOR_API_KEY=cursor_xxx
-PROJECT_ROOTS=D:\code;E:\work
+PROJECT_ROOTS=D:\code;C:\code
 COOKIE_SECURE=false
 ```
 
@@ -85,5 +85,5 @@ PWA 安装依赖：
 
 - 不要把 `.env`、`data/` 下的运行时数据（如 `jobs.json`、`selected-projects.json`）或管理员密码提交到 Git。
 - 公网访问必须使用 HTTPS，并把 `COOKIE_SECURE` 设置为 `true`。
-- `PROJECT_ROOTS` 不要设置为整个系统盘，建议设置为 `D:\code;E:\work` 这类项目根目录列表。
+- `PROJECT_ROOTS` 不要设置为整个系统盘，建议设置为 `D:\code;C:\code` 这类项目根目录列表。
 - 控制台只适合个人使用，不建议给多人共享管理员账号。

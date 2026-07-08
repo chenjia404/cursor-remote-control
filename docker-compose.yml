@@ -10,9 +10,10 @@ services:
     environment:
       HOST: 0.0.0.0
       PORT: 20267
-      PROJECT_ROOTS: /workspace
+      PROJECT_ROOTS: /workspace/d-code;/workspace/c-code
       DATA_DIR: /app/data
       COOKIE_SECURE: "true"
     volumes:
       - ./data:/app/data
-      - "D:\\code:/workspace"
+      - "D:\\code:/workspace/d-code"
+      - "C:\\code:/workspace/c-code"
