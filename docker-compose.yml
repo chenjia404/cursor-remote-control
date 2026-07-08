@@ -5,7 +5,8 @@ services:
     ports:
       - "20267:20267"
     env_file:
-      - .env
+      - path: .env
+        format: raw
     environment:
       HOST: 0.0.0.0
       PORT: 20267
