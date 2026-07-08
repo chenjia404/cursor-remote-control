@@ -10,6 +10,14 @@ const state = {
   installPromptEvent: null,
   followUpDrafts: new Map(),
   stoppingJobIds: new Set(),
+  browse: {
+    open: false,
+    currentPath: null,
+    parentPath: null,
+    currentIsProject: false,
+    entries: [],
+    loading: false,
+  },
 };
 
 const versionEl = document.querySelector("#appVersion");
@@ -53,6 +61,7 @@ function setLoggedIn(loggedIn) {
 
 function renderProjects() {
   const select = $("#projectSelect");
+  const hint = $("#projectSelectHint");
   const previousValue = select.value;
   const keyword = $("#projectSearchInput").value.trim().toLowerCase();
   const projects = state.projects.filter((project) => {
@@ -60,19 +69,114 @@ function renderProjects() {
     return `${project.name} ${project.path}`.toLowerCase().includes(keyword);
   });
 
+  if (state.projects.length === 0) {
+    select.innerHTML = '<option value="">暂无已选项目，请先按目录打开并确认</option>';
+    if (hint) hint.textContent = "下拉列表只显示已确认过的项目。新项目请点「按目录打开」浏览并确认。";
+    return;
+  }
+
+  if (projects.length === 0) {
+    select.innerHTML = '<option value="">没有匹配的已选项目</option>';
+    return;
+  }
+
   select.innerHTML = projects
     .map((project) => {
       const modifiedAt = project.modifiedAt ? new Date(project.modifiedAt).toLocaleString() : "未知时间";
-      return `<option value="${project.id}">${project.name} · ${modifiedAt} · ${project.path}</option>`;
+      return `<option value="${project.id}">${escapeHtml(project.name)} · ${escapeHtml(modifiedAt)} · ${escapeHtml(project.path)}</option>`;
     })
     .join("");
 
   if (projects.some((project) => project.id === previousValue)) {
     select.value = previousValue;
   }
+}
 
-  if (projects.length === 0) {
-    select.innerHTML = '<option value="">没有匹配的项目</option>';
+function setBrowsePanelOpen(open) {
+  state.browse.open = open;
+  $("#browsePanel").classList.toggle("hidden", !open);
+  $("#browseOpenButton").classList.toggle("hidden", open);
+}
+
+function renderBrowsePanel() {
+  const pathEl = $("#browsePath");
+  const listEl = $("#browseList");
+  const upButton = $("#browseUpButton");
+  const selectButton = $("#browseSelectButton");
+  const { currentPath, currentIsProject, entries, loading } = state.browse;
+
+  pathEl.textContent = currentPath || "选择允许的根目录开始浏览";
+  // 已进入具体目录时允许返回；在某个 PROJECT_ROOT 顶层时回到根列表
+  upButton.disabled = loading || !currentPath;
+  selectButton.disabled = loading || !currentPath || !currentIsProject;
+  selectButton.textContent = currentIsProject ? "确认当前目录为项目" : "当前目录不是有效项目";
+
+  if (loading) {
+    listEl.innerHTML = '<p class="browse-empty">正在加载目录…</p>';
+    return;
+  }
+
+  if (entries.length === 0) {
+    listEl.innerHTML = '<p class="browse-empty">此目录下没有可进入的子文件夹</p>';
+    return;
+  }
+
+  listEl.innerHTML = entries
+    .map((entry) => {
+      const badge = entry.isProject ? '<span class="browse-badge">可确认</span>' : "";
+      return `
+        <button type="button" class="browse-item" data-browse-path="${escapeHtml(entry.path)}" data-is-project="${entry.isProject ? "1" : "0"}">
+          <span class="browse-item-main">
+            <span class="browse-item-name">${escapeHtml(entry.name)}</span>
+            <span class="browse-item-path">${escapeHtml(entry.path)}</span>
+          </span>
+          ${badge}
+        </button>
+      `;
+    })
+    .join("");
+}
+
+async function loadBrowse(targetPath) {
+  state.browse.loading = true;
+  renderBrowsePanel();
+
+  try {
+    const query = targetPath ? `?path=${encodeURIComponent(targetPath)}` : "";
+    const data = await api(`/api/projects/browse${query}`);
+    state.browse.currentPath = data.currentPath;
+    state.browse.parentPath = data.parentPath;
+    state.browse.currentIsProject = Boolean(data.currentIsProject);
+    state.browse.entries = data.entries || [];
+  } catch (error) {
+    showToast(error.message);
+  } finally {
+    state.browse.loading = false;
+    renderBrowsePanel();
+  }
+}
+
+async function confirmBrowseSelection(projectPath) {
+  if (!projectPath) {
+    showToast("请先进入要打开的项目目录");
+    return;
+  }
+
+  const selectButton = $("#browseSelectButton");
+  selectButton.disabled = true;
+  try {
+    const { project } = await api("/api/projects/select", {
+      method: "POST",
+      body: JSON.stringify({ path: projectPath }),
+    });
+    await refreshData();
+    $("#projectSelect").value = project.id;
+    setBrowsePanelOpen(false);
+    showToast(`已确认项目：${project.name}`);
+  } catch (error) {
+    showToast(error.message);
+  } finally {
+    renderBrowsePanel();
   }
 }
 
@@ -260,19 +364,19 @@ function getConversationChain(jobId) {
   return related.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
 
-function appendAssistantMessage(messages, text, time) {
+function appendChatMessage(messages, role, text, time) {
   const content = String(text || "");
   if (!content.trim()) return;
 
   const previous = messages.at(-1);
-  if (previous?.role === "assistant") {
+  if (previous?.role === role) {
     previous.text += content;
     previous.time = time || previous.time;
     return;
   }
 
   messages.push({
-    role: "assistant",
+    role,
     time: time || new Date().toISOString(),
     text: content.trimStart(),
   });
@@ -289,10 +393,17 @@ function buildChatMessages(jobs) {
     });
 
     let sawAssistant = false;
+    let sawThinking = false;
     for (const log of job.logs || []) {
+      if (log.level === "thinking") {
+        sawThinking = true;
+        appendChatMessage(messages, "thinking", log.message, log.time);
+        continue;
+      }
+
       if (log.level === "assistant") {
         sawAssistant = true;
-        appendAssistantMessage(messages, log.message, log.time);
+        appendChatMessage(messages, "assistant", log.message, log.time);
         continue;
       }
 
@@ -309,10 +420,10 @@ function buildChatMessages(jobs) {
 
     // 兼容旧任务：流日志缺失时，用最终 result 兜底展示 AI 回复
     if (!sawAssistant && typeof job.result === "string" && job.result.trim()) {
-      appendAssistantMessage(messages, job.result, job.finishedAt || job.updatedAt);
+      appendChatMessage(messages, "assistant", job.result, job.finishedAt || job.updatedAt);
     }
 
-    if (!sawAssistant && !job.result && ["queued", "running"].includes(job.status)) {
+    if (!sawAssistant && !sawThinking && !job.result && ["queued", "running"].includes(job.status)) {
       messages.push({
         role: "system",
         level: "info",
@@ -348,6 +459,20 @@ function renderChatMessages(job) {
           <div class="chat-system chat-system-${message.level}">
             <span>${escapeHtml(message.text)}</span>
             <time>${escapeHtml(time)}</time>
+          </div>
+        `;
+      }
+
+      if (message.role === "thinking") {
+        return `
+          <div class="chat-row chat-left">
+            <details class="chat-thinking" open>
+              <summary>
+                <span>思考过程</span>
+                <time>${escapeHtml(time)}</time>
+              </summary>
+              <div class="chat-text">${escapeHtml(message.text)}</div>
+            </details>
           </div>
         `;
       }
@@ -531,13 +656,41 @@ $("#stopJobButton").addEventListener("click", () => {
 
 $("#projectSearchInput").addEventListener("input", renderProjects);
 
+$("#browseOpenButton").addEventListener("click", async () => {
+  setBrowsePanelOpen(true);
+  await loadBrowse(null);
+});
+
+$("#browseCloseButton").addEventListener("click", () => {
+  setBrowsePanelOpen(false);
+});
+
+$("#browseUpButton").addEventListener("click", async () => {
+  if (state.browse.parentPath) {
+    await loadBrowse(state.browse.parentPath);
+    return;
+  }
+  // 已在某个允许根目录顶层，或没有上级时，回到根列表
+  await loadBrowse(null);
+});
+
+$("#browseSelectButton").addEventListener("click", async () => {
+  await confirmBrowseSelection(state.browse.currentPath);
+});
+
+$("#browseList").addEventListener("click", async (event) => {
+  const item = event.target.closest("[data-browse-path]");
+  if (!item) return;
+  await loadBrowse(item.dataset.browsePath);
+});
+
 $("#submitJobButton").addEventListener("click", async () => {
   const prompt = $("#promptInput").value.trim();
   const projectId = $("#projectSelect").value;
   const parentJobId = $("#parentJobSelect").value || undefined;
 
   if (!projectId) {
-    showToast("没有可用项目");
+    showToast("请先选择或确认一个项目");
     return;
   }
   if (!prompt) {

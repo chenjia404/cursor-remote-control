@@ -8,7 +8,7 @@ export type JobStatus = "queued" | "running" | "finished" | "error" | "cancelled
 
 export type JobLog = {
   time: string;
-  level: "info" | "assistant" | "error";
+  level: "info" | "thinking" | "assistant" | "error";
   message: string;
 };
 
@@ -77,6 +77,28 @@ export async function loadJobs(): Promise<void> {
   }
 }
 
+/**
+ * 进程内存里的 activeRuns 会在重启后丢失，但 jobs.json 里的 queued/running 会原样保留。
+ * 启动时把这类孤儿任务标为 error，避免前端一直显示「AI 正在回复」。
+ */
+export function recoverInterruptedJobs(): number {
+  let count = 0;
+
+  for (const job of [...jobs.values()]) {
+    if (!["queued", "running"].includes(job.status)) continue;
+
+    updateJob(job.id, {
+      status: "error",
+      finishedAt: now(),
+      error: "服务进程已重启，任务被中断。",
+    });
+    appendJobLog(job.id, "error", "服务进程已重启，进行中的任务无法继续，已标记为中断。");
+    count += 1;
+  }
+
+  return count;
+}
+
 export function createJob(input: {
   project: ProjectInfo;
   prompt: string;
@@ -134,7 +156,8 @@ export function appendJobLog(id: string, level: JobLog["level"], message: string
     message.length > MAX_LOG_MESSAGE_LENGTH ? `${message.slice(0, MAX_LOG_MESSAGE_LENGTH)}\n...日志过长，已截断。` : message;
 
   const lastLog = job.logs.at(-1);
-  if (level === "assistant" && lastLog?.level === "assistant") {
+  // 流式片段按同类日志合并，便于聊天气泡连续展示
+  if ((level === "assistant" || level === "thinking") && lastLog?.level === level) {
     const mergedMessage = `${lastLog.message}${safeMessage}`;
     lastLog.message =
       mergedMessage.length > MAX_LOG_MESSAGE_LENGTH

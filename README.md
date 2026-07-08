@@ -6,7 +6,7 @@
 
 - 管理员账号密码登录，默认用户名为 `admin`。
 - 默认监听端口 `20267`。
-- 默认扫描 `PROJECT_ROOTS` 下的本地项目，支持多个根目录，并按最近修改时间显示。
+- 支持在 `PROJECT_ROOTS` 范围内按目录浏览并确认项目；下拉列表只显示已确认过的项目。
 - 通过 Cursor SDK 的本地模式在项目目录中执行 Agent 任务。
 - 保存任务历史、运行状态、Agent ID、Run ID 和日志。
 - 支持 PWA，可在手机浏览器中安装到主屏幕。
@@ -83,7 +83,7 @@ PWA 安装依赖：
 
 ## 安全注意事项
 
-- 不要把 `.env`、`data/jobs.json` 或管理员密码提交到 Git。
+- 不要把 `.env`、`data/` 下的运行时数据（如 `jobs.json`、`selected-projects.json`）或管理员密码提交到 Git。
 - 公网访问必须使用 HTTPS，并把 `COOKIE_SECURE` 设置为 `true`。
 - `PROJECT_ROOTS` 不要设置为整个系统盘，建议设置为 `D:\code;E:\work` 这类项目根目录列表。
 - 控制台只适合个人使用，不建议给多人共享管理员账号。

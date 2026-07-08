@@ -37,7 +37,9 @@ function unwrapSdkMessage(event: unknown): unknown {
   return event;
 }
 
-function extractAssistantText(event: unknown): string {
+function extractStreamText(
+  event: unknown,
+): { level: "assistant" | "thinking"; text: string } | null {
   const value = unwrapSdkMessage(event) as {
     type?: string;
     text?: string;
@@ -48,18 +50,18 @@ function extractAssistantText(event: unknown): string {
 
   if (value.type === "assistant") {
     const blocks = value.message?.content ?? [];
-    return blocks
+    const text = blocks
       .filter((block) => block.type === "text" && typeof block.text === "string")
       .map((block) => block.text)
       .join("");
+    return text ? { level: "assistant", text } : null;
   }
 
-  // thinking 有时先于正式回复出现，一并展示可避免“长时间无 AI 内容”
-  if (value.type === "thinking" && typeof value.text === "string") {
-    return value.text;
+  if (value.type === "thinking" && typeof value.text === "string" && value.text) {
+    return { level: "thinking", text: value.text };
   }
 
-  return "";
+  return null;
 }
 
 function hasAssistantLogs(job: JobRecord): boolean {
@@ -158,13 +160,13 @@ export async function runCursorJob(jobId: string): Promise<void> {
     appendJobLog(job.id, "info", `Run 已启动：${run.id ?? "unknown"}`);
 
     if (run.stream) {
-      // 聊天气泡只展示 assistant 日志：流式片段尽快落库，避免运行中长时间只看见用户消息
+      // assistant / thinking 分开落库：前端可分别展示思考过程与正式回复
       for await (const event of run.stream()) {
         if (isJobCancelled(job.id)) break;
 
-        const text = extractAssistantText(event);
-        if (!text) continue;
-        appendJobLog(job.id, "assistant", text);
+        const chunk = extractStreamText(event);
+        if (!chunk) continue;
+        appendJobLog(job.id, chunk.level, chunk.text);
       }
     }
 

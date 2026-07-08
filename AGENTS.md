@@ -49,7 +49,7 @@ pnpm generate-icons
 - `src/server.ts`：Fastify 服务入口、路由注册、静态文件托管。
 - `src/auth.ts`：管理员登录、密码哈希、Session Cookie、CSRF 校验。
 - `src/config.ts`：环境变量读取和配置校验。
-- `src/projects.ts`：本地项目发现、多个项目根目录扫描、路径安全校验。
+- `src/projects.ts`：已选项目持久化、目录浏览、路径安全校验与项目标记检测。
 - `src/jobs.ts`：任务历史、任务状态、日志持久化。
 - `src/cursorAgent.ts`：Cursor SDK 本地 Agent 执行封装。
 - `src/public/`：移动端 Web 页面和 PWA 静态资源。

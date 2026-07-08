@@ -8,8 +8,16 @@ import { z } from "zod";
 import { clearSession, issueSession, requireAuth, requireCsrf, verifyPassword } from "./auth.js";
 import { assertRequiredConfig, config } from "./config.js";
 import { cancelCursorJob, runCursorJob } from "./cursorAgent.js";
-import { createJob, getJob, listJobs, loadJobs } from "./jobs.js";
-import { getProjectById, listProjects } from "./projects.js";
+import { createJob, getJob, listJobs, loadJobs, recoverInterruptedJobs } from "./jobs.js";
+import {
+  browseDirectory,
+  getProjectById,
+  isProjectSelected,
+  listSelectedProjects,
+  loadSelectedProjects,
+  selectProject,
+  unselectProject,
+} from "./projects.js";
 
 const loginSchema = z.object({
   username: z.string().min(1),
@@ -22,13 +30,25 @@ const createJobSchema = z.object({
   parentJobId: z.string().uuid().optional(),
 });
 
+const browseSchema = z.object({
+  path: z.string().optional(),
+});
+
+const selectProjectSchema = z.object({
+  path: z.string().min(1),
+});
+
 function getRequestIp(requestIp: string | undefined): string {
   return requestIp || "unknown";
 }
 
 async function start(): Promise<void> {
   assertRequiredConfig();
-  await loadJobs();
+  await Promise.all([loadJobs(), loadSelectedProjects()]);
+  const recoveredCount = recoverInterruptedJobs();
+  if (recoveredCount > 0) {
+    console.warn(`已将 ${recoveredCount} 个因进程重启而中断的任务标记为失败`);
+  }
 
   const app = Fastify({
     logger: true,
@@ -94,8 +114,40 @@ async function start(): Promise<void> {
   }));
 
   app.get("/api/projects", { preHandler: requireAuth }, async () => ({
-    projects: await listProjects(),
+    projects: await listSelectedProjects(),
   }));
+
+  app.get("/api/projects/browse", { preHandler: requireAuth }, async (request, reply) => {
+    const query = browseSchema.parse(request.query);
+    try {
+      return await browseDirectory(query.path);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      reply.code(400).send({ error: message });
+    }
+  });
+
+  app.post("/api/projects/select", { preHandler: requireCsrf }, async (request, reply) => {
+    const body = selectProjectSchema.parse(request.body);
+    try {
+      const project = await selectProject(body.path);
+      return { project };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      reply.code(400).send({ error: message });
+    }
+  });
+
+  app.delete("/api/projects/:id", { preHandler: requireCsrf }, async (request, reply) => {
+    const params = z.object({ id: z.string().min(1) }).parse(request.params);
+    try {
+      await unselectProject(params.id);
+      return { ok: true };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      reply.code(400).send({ error: message });
+    }
+  });
 
   app.get("/api/jobs", { preHandler: requireAuth }, async () => ({
     jobs: listJobs(),
@@ -115,6 +167,13 @@ async function start(): Promise<void> {
   app.post("/api/jobs", { preHandler: requireCsrf }, async (request, reply) => {
     const body = createJobSchema.parse(request.body);
     const project = await getProjectById(body.projectId);
+
+    // 新建会话必须使用已确认项目；续聊可沿用历史任务中的项目路径
+    if (!body.parentJobId && !(await isProjectSelected(body.projectId))) {
+      reply.code(400).send({ error: "请先在「按目录打开」中确认该项目" });
+      return;
+    }
+
     const job = createJob({
       project,
       prompt: body.prompt,
