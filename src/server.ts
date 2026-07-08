@@ -28,6 +28,7 @@ const createJobSchema = z.object({
   projectId: z.string().min(1),
   prompt: z.string().min(1).max(20000),
   parentJobId: z.string().uuid().optional(),
+  mode: z.enum(["agent", "plan"]).optional(),
 });
 
 const browseSchema = z.object({
@@ -180,6 +181,7 @@ async function start(): Promise<void> {
       submittedBy: request.user?.username ?? config.adminUsername,
       sourceIp: getRequestIp(request.ip),
       parentJobId: body.parentJobId,
+      mode: body.mode ?? config.cursorDefaultMode,
     });
 
     runCursorJob(job.id).catch((error) => {

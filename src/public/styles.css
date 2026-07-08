@@ -508,6 +508,34 @@ label {
   color: #fee2e2;
 }
 
+.mode-badge {
+  border-radius: 999px;
+  display: inline-flex;
+  font-size: 0.72rem;
+  font-weight: 700;
+  margin-left: 0.35rem;
+  padding: 0.12rem 0.4rem;
+  vertical-align: middle;
+}
+
+.mode-agent {
+  background: rgba(56, 189, 248, 0.18);
+  color: #7dd3fc;
+}
+
+.mode-plan {
+  background: rgba(167, 139, 250, 0.18);
+  color: #c4b5fd;
+}
+
+.follow-up-mode select {
+  border: 1px solid #334155;
+  border-radius: 0.65rem;
+  font-size: 0.9rem;
+  margin-top: 0.25rem;
+  padding: 0.55rem 0.65rem;
+}
+
 .toast {
   background: #0f172a;
   border: 1px solid #38bdf8;

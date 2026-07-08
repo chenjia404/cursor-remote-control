@@ -104,6 +104,8 @@ Invoke-RestMethod -Uri "http://127.0.0.1:20267/health" | ConvertTo-Json -Compres
 - 当前使用本地模式执行 Agent，`cwd` 必须是经过校验的项目目录。
 - `CURSOR_API_KEY` 必须在 `.env` 中配置真实值。
 - `CURSOR_MODEL` 默认可使用 `auto`。
+- `CURSOR_DEFAULT_MODE` 可选 `agent` 或 `plan`，作为未指定模式时的默认值。
+- Cursor SDK 当前仅支持 `agent` 与 `plan` 两种对话模式；可通过 `Agent.create({ mode })` 与 `agent.send(prompt, { mode })` 切换。
 - Agent 输出是流式分片，写日志时需要合并连续 assistant 内容，避免界面出现一行一个词。
 
 ## Docker 注意事项

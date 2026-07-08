@@ -1,5 +1,12 @@
 import { APP_VERSION } from "./version.js";
 
+const MODE_LABELS = {
+  agent: "Agent",
+  plan: "Plan",
+};
+
+const MODE_STORAGE_KEY = "cursor-rc-mode";
+
 const state = {
   csrfToken: "",
   jobs: [],
@@ -26,6 +33,43 @@ if (versionEl) {
 }
 
 const $ = (selector) => document.querySelector(selector);
+
+function loadSavedMode() {
+  try {
+    const saved = localStorage.getItem(MODE_STORAGE_KEY);
+    if (saved === "agent" || saved === "plan") return saved;
+  } catch {
+    // localStorage 不可用时忽略
+  }
+  return "agent";
+}
+
+function saveMode(mode) {
+  try {
+    localStorage.setItem(MODE_STORAGE_KEY, mode);
+  } catch {
+    // localStorage 不可用时忽略
+  }
+}
+
+function getModeFromSelect(select) {
+  const value = select?.value;
+  return value === "plan" ? "plan" : "agent";
+}
+
+function setModeSelect(select, mode) {
+  if (!select) return;
+  select.value = mode === "plan" ? "plan" : "agent";
+}
+
+function modeText(mode) {
+  return MODE_LABELS[mode] || MODE_LABELS.agent;
+}
+
+function modeBadge(mode) {
+  const safeMode = mode === "plan" ? "plan" : "agent";
+  return `<span class="mode-badge mode-${safeMode}">${escapeHtml(modeText(safeMode))}</span>`;
+}
 
 function showToast(message) {
   const toast = $("#toast");
@@ -240,7 +284,7 @@ function renderJobs() {
       return `
         <article class="job-item${activeClass}" data-job-id="${job.id}">
           <div class="job-item-summary">
-            <strong>${escapeHtml(job.project.name)}<span class="status status-${job.status}">${statusText(job.status)}</span></strong>
+            <strong>${escapeHtml(job.project.name)}<span class="status status-${job.status}">${statusText(job.status)}</span>${modeBadge(job.mode)}</strong>
             <div>${escapeHtml(job.promptSummary)}</div>
             <div class="meta">${new Date(job.createdAt).toLocaleString()} · ${job.id}</div>
           </div>
@@ -269,6 +313,7 @@ function updateFollowUpComposer(job) {
   const button = $("#followUpButton");
   const hint = $("#followUpHint");
   const input = $("#followUpInput");
+  const modeSelect = $("#followUpModeSelect");
 
   if (!job) {
     form.classList.add("hidden");
@@ -277,6 +322,7 @@ function updateFollowUpComposer(job) {
   }
 
   form.classList.remove("hidden");
+  setModeSelect(modeSelect, job.mode || loadSavedMode());
 
   const draft = state.followUpDrafts.get(job.id) || "";
   if (document.activeElement !== input) {
@@ -513,6 +559,7 @@ function renderCurrentJob(job) {
   $("#currentJob").innerHTML = `
     <strong>${escapeHtml(job.project.name)}</strong>
     <span class="status status-${job.status}">${statusText(job.status)}</span>
+    ${modeBadge(job.mode)}
     <p class="meta">${escapeHtml(job.promptSummary)}</p>
   `;
   renderChatMessages(job);
@@ -540,12 +587,16 @@ async function submitFollowUp(prompt, parentJobId) {
     return;
   }
 
+  const mode = getModeFromSelect($("#followUpModeSelect"));
+  saveMode(mode);
+
   const { job: created } = await api("/api/jobs", {
     method: "POST",
     body: JSON.stringify({
       projectId: job.project.id,
       prompt,
       parentJobId: job.id,
+      mode,
     }),
   });
 
@@ -700,9 +751,12 @@ $("#submitJobButton").addEventListener("click", async () => {
 
   $("#submitJobButton").disabled = true;
   try {
+    const mode = getModeFromSelect($("#modeSelect"));
+    saveMode(mode);
+
     const { job } = await api("/api/jobs", {
       method: "POST",
-      body: JSON.stringify({ projectId, prompt, parentJobId }),
+      body: JSON.stringify({ projectId, prompt, parentJobId, mode }),
     });
     state.currentJobId = job.id;
     renderCurrentJob(job);
@@ -751,6 +805,14 @@ $("#followUpInput").addEventListener("input", (event) => {
       state.followUpDrafts.delete(state.currentJobId);
     }
   }
+});
+
+$("#modeSelect").addEventListener("change", (event) => {
+  saveMode(getModeFromSelect(event.currentTarget));
+});
+
+$("#followUpModeSelect").addEventListener("change", (event) => {
+  saveMode(getModeFromSelect(event.currentTarget));
 });
 
 $("#jobList").addEventListener("click", async (event) => {
@@ -847,4 +909,5 @@ if ("serviceWorker" in navigator) {
 }
 
 updateInstallButtonVisibility();
+setModeSelect($("#modeSelect"), loadSavedMode());
 bootstrap();

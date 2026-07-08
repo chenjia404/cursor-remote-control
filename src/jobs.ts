@@ -6,6 +6,9 @@ import type { ProjectInfo } from "./projects.js";
 
 export type JobStatus = "queued" | "running" | "finished" | "error" | "cancelled";
 
+/** Cursor SDK 支持的对话模式 */
+export type AgentMode = "agent" | "plan";
+
 export type JobLog = {
   time: string;
   level: "info" | "thinking" | "assistant" | "error";
@@ -27,6 +30,8 @@ export type JobRecord = {
   agentId?: string;
   runId?: string;
   parentJobId?: string;
+  /** 对话模式；旧任务可能缺失，运行时回退到配置默认值 */
+  mode?: AgentMode;
   result?: string;
   error?: string;
   logs: JobLog[];
@@ -105,6 +110,7 @@ export function createJob(input: {
   submittedBy: string;
   sourceIp: string;
   parentJobId?: string;
+  mode: AgentMode;
 }): JobRecord {
   const timestamp = now();
   const job: JobRecord = {
@@ -122,11 +128,12 @@ export function createJob(input: {
     submittedBy: input.submittedBy,
     sourceIp: input.sourceIp,
     parentJobId: input.parentJobId,
+    mode: input.mode,
     logs: [],
   };
 
   jobs.set(job.id, job);
-  appendJobLog(job.id, "info", "任务已创建，等待执行。");
+  appendJobLog(job.id, "info", `任务已创建（${input.mode === "plan" ? "Plan" : "Agent"} 模式），等待执行。`);
   return job;
 }
 

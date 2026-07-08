@@ -12,13 +12,13 @@
     <link rel="icon" href="/icons/icon-192.png" type="image/png" sizes="192x192" />
     <link rel="icon" href="/icons/icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" sizes="180x180" />
-    <link rel="stylesheet" href="/styles.css?v=0.2.4" />
+    <link rel="stylesheet" href="/styles.css?v=0.2.5" />
   </head>
   <body>
     <main class="shell">
       <section class="card header-card">
         <div>
-          <p class="eyebrow">Cursor Remote Control <span id="appVersion" class="version">v0.2.4</span></p>
+          <p class="eyebrow">Cursor Remote Control <span id="appVersion" class="version">v0.2.5</span></p>
           <h1>远程控制台</h1>
         </div>
         <div class="header-actions">
@@ -83,6 +83,13 @@
             </select>
           </label>
           <label>
+            模式
+            <select id="modeSelect">
+              <option value="agent">Agent（执行）</option>
+              <option value="plan">Plan（规划）</option>
+            </select>
+          </label>
+          <label>
             指令
             <textarea id="promptInput" rows="8" placeholder="例如：检查这个项目的登录页面问题并修复，完成后运行相关检查。"></textarea>
           </label>
@@ -98,6 +105,13 @@
           <div id="currentJob" class="empty">暂无任务</div>
           <div id="chatOutput" class="chat"></div>
           <form id="followUpForm" class="follow-up-composer hidden">
+            <label class="follow-up-mode">
+              模式
+              <select id="followUpModeSelect">
+                <option value="agent">Agent（执行）</option>
+                <option value="plan">Plan（规划）</option>
+              </select>
+            </label>
             <textarea
               id="followUpInput"
               rows="2"
@@ -118,6 +132,6 @@
 
       <div id="toast" class="toast hidden"></div>
     </main>
-    <script src="/app.js?v=0.2.4" type="module"></script>
+    <script src="/app.js?v=0.2.5" type="module"></script>
   </body>
 </html>

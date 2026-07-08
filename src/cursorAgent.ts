@@ -2,6 +2,7 @@ import {
   Agent,
   CursorAgentError,
   UnsupportedRunOperationError,
+  type AgentModeOption,
   type ModelSelection,
   type Run,
   type SendOptions,
@@ -68,13 +69,23 @@ function hasAssistantLogs(job: JobRecord): boolean {
   return job.logs.some((log) => log.level === "assistant");
 }
 
+function resolveJobMode(job: JobRecord): AgentModeOption {
+  return job.mode ?? config.cursorDefaultMode;
+}
+
+function modeLabel(mode: AgentModeOption): string {
+  return mode === "plan" ? "Plan" : "Agent";
+}
+
 async function createAgentForJob(job: JobRecord): Promise<DisposableAgent> {
   const apiKey = requireCursorApiKey();
   const parentJob = job.parentJobId ? getJob(job.parentJobId) : undefined;
   const model = { id: config.cursorModel };
 
+  const mode = resolveJobMode(job);
+
   if (parentJob?.agentId) {
-    appendJobLog(job.id, "info", `继续已有 Agent：${parentJob.agentId}`);
+    appendJobLog(job.id, "info", `继续已有 Agent：${parentJob.agentId}（${modeLabel(mode)} 模式）`);
     // Local SDK resume 同样需要显式 model，否则会直接失败
     return (await Agent.resume(parentJob.agentId, {
       apiKey,
@@ -86,6 +97,7 @@ async function createAgentForJob(job: JobRecord): Promise<DisposableAgent> {
   return (await Agent.create({
     apiKey,
     model,
+    mode,
     local: { cwd: job.project.path },
   })) as DisposableAgent;
 }
@@ -148,13 +160,14 @@ export async function runCursorJob(jobId: string): Promise<void> {
       status: "running",
       startedAt: new Date().toISOString(),
     });
-    appendJobLog(job.id, "info", `开始在项目 ${job.project.name} 中执行。`);
+    const mode = resolveJobMode(job);
+    appendJobLog(job.id, "info", `开始在项目 ${job.project.name} 中执行（${modeLabel(mode)} 模式）。`);
 
     agent = await createAgentForJob(job);
     updateJob(job.id, { agentId: agent.agentId });
     if (isJobCancelled(job.id)) return;
 
-    const run = await agent.send(job.prompt);
+    const run = await agent.send(job.prompt, { mode });
     activeRuns.set(job.id, run);
     updateJob(job.id, { runId: run.id });
     appendJobLog(job.id, "info", `Run 已启动：${run.id ?? "unknown"}`);
