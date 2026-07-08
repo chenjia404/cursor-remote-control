@@ -1,0 +1,30 @@
+{
+  "name": "cursor-remote-control",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "tsx watch src/server.ts",
+    "start": "node dist/src/server.js",
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "init-admin": "tsx scripts/init-admin.ts",
+    "generate-icons": "tsx scripts/generate-icons.ts"
+  },
+  "dependencies": {
+    "@cursor/sdk": "latest",
+    "@fastify/cookie": "latest",
+    "@fastify/helmet": "latest",
+    "@fastify/rate-limit": "latest",
+    "@fastify/static": "latest",
+    "dotenv": "latest",
+    "fastify": "latest",
+    "zod": "latest"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "sharp": "^0.35.3",
+    "tsx": "latest",
+    "typescript": "latest"
+  }
+}

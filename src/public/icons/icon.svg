@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-label="Cursor Remote Control">
+  <rect width="512" height="512" rx="112" fill="#020617"/>
+  <path d="M128 148c0-22.1 17.9-40 40-40h176c22.1 0 40 17.9 40 40v216c0 22.1-17.9 40-40 40H168c-22.1 0-40-17.9-40-40V148Z" fill="#0f172a" stroke="#38bdf8" stroke-width="24"/>
+  <path d="M184 188h144M184 246h104M184 304h144" stroke="#e0f2fe" stroke-width="24" stroke-linecap="round"/>
+  <circle cx="360" cy="352" r="44" fill="#38bdf8"/>
+  <path d="M344 352l12 12 24-28" stroke="#082f49" stroke-width="14" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

@@ -1,0 +1,17 @@
+services:
+  cursor-remote-control:
+    build: .
+    restart: unless-stopped
+    ports:
+      - "20267:20267"
+    env_file:
+      - .env
+    environment:
+      HOST: 0.0.0.0
+      PORT: 20267
+      PROJECT_ROOTS: /workspace
+      DATA_DIR: /app/data
+      COOKIE_SECURE: "true"
+    volumes:
+      - ./data:/app/data
+      - "D:\\code:/workspace"
