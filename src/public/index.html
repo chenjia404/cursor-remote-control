@@ -12,13 +12,13 @@
     <link rel="icon" href="/icons/icon-192.png" type="image/png" sizes="192x192" />
     <link rel="icon" href="/icons/icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" sizes="180x180" />
-    <link rel="stylesheet" href="/styles.css?v=0.2.0" />
+    <link rel="stylesheet" href="/styles.css?v=0.2.2" />
   </head>
   <body>
     <main class="shell">
       <section class="card header-card">
         <div>
-          <p class="eyebrow">Cursor Remote Control <span id="appVersion" class="version">v0.2.0</span></p>
+          <p class="eyebrow">Cursor Remote Control <span id="appVersion" class="version">v0.2.2</span></p>
           <h1>远程控制台</h1>
         </div>
         <div class="header-actions">
@@ -71,9 +71,12 @@
         </section>
 
         <section class="card current-job-card">
-          <h2>当前任务</h2>
+          <div class="row">
+            <h2>会话详情</h2>
+            <button id="stopJobButton" class="ghost danger hidden" type="button">停止</button>
+          </div>
           <div id="currentJob" class="empty">暂无任务</div>
-          <pre id="logOutput" class="logs"></pre>
+          <div id="chatOutput" class="chat"></div>
           <form id="followUpForm" class="follow-up-composer hidden">
             <textarea
               id="followUpInput"
@@ -95,6 +98,6 @@
 
       <div id="toast" class="toast hidden"></div>
     </main>
-    <script src="/app.js?v=0.2.0" type="module"></script>
+    <script src="/app.js?v=0.2.2" type="module"></script>
   </body>
 </html>

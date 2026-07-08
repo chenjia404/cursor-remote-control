@@ -9,6 +9,7 @@ const state = {
   pollingTimer: null,
   installPromptEvent: null,
   followUpDrafts: new Map(),
+  stoppingJobIds: new Set(),
 };
 
 const versionEl = document.querySelector("#appVersion");
@@ -95,33 +96,14 @@ function escapeHtml(value) {
     .replaceAll("'", "&#39;");
 }
 
-function followUpHint(job) {
-  if (["queued", "running"].includes(job.status)) {
-    return "任务进行中，完成后可继续安排";
-  }
-  if (!job?.agentId) {
-    return "该任务没有可继续的会话";
-  }
-  return "基于当前会话继续对话 · Enter 发送，Shift+Enter 换行";
-}
-
-function rememberFollowUpDrafts() {
-  document.querySelectorAll(".job-follow-up-input").forEach((input) => {
-    const jobId = input.closest("[data-parent-job-id]")?.dataset.parentJobId;
-    if (!jobId) return;
-    const value = input.value;
-    if (value.trim()) {
-      state.followUpDrafts.set(jobId, value);
-    } else {
-      state.followUpDrafts.delete(jobId);
-    }
-  });
-
+function rememberFollowUpDraft() {
   const currentInput = $("#followUpInput");
   if (state.currentJobId && currentInput && !currentInput.disabled) {
     const value = currentInput.value;
     if (value.trim()) {
       state.followUpDrafts.set(state.currentJobId, value);
+    } else {
+      state.followUpDrafts.delete(state.currentJobId);
     }
   }
 }
@@ -134,15 +116,7 @@ function autosizeTextarea(input) {
 function renderJobs() {
   const list = $("#jobList");
   const parentSelect = $("#parentJobSelect");
-  rememberFollowUpDrafts();
-
-  const activeInput = document.activeElement;
-  const focusedParentJobId =
-    activeInput?.classList?.contains("job-follow-up-input")
-      ? activeInput.closest("[data-parent-job-id]")?.dataset.parentJobId
-      : "";
-  const selectionStart = focusedParentJobId ? activeInput.selectionStart : null;
-  const selectionEnd = focusedParentJobId ? activeInput.selectionEnd : null;
+  rememberFollowUpDraft();
 
   parentSelect.innerHTML =
     '<option value="">新建会话</option>' +
@@ -158,8 +132,6 @@ function renderJobs() {
 
   list.innerHTML = state.jobs
     .map((job) => {
-      const disabled = !canFollowUp(job);
-      const draft = state.followUpDrafts.get(job.id) || "";
       const activeClass = job.id === state.currentJobId ? " active" : "";
       return `
         <article class="job-item${activeClass}" data-job-id="${job.id}">
@@ -168,42 +140,18 @@ function renderJobs() {
             <div>${escapeHtml(job.promptSummary)}</div>
             <div class="meta">${new Date(job.createdAt).toLocaleString()} · ${job.id}</div>
           </div>
-          <form class="follow-up-composer job-follow-up" data-parent-job-id="${job.id}">
-            <textarea
-              class="job-follow-up-input"
-              rows="2"
-              placeholder="继续安排这个任务…"
-              ${disabled ? "disabled" : ""}
-            >${escapeHtml(draft)}</textarea>
-            <div class="follow-up-actions">
-              <span class="hint">${escapeHtml(followUpHint(job))}</span>
-              <button type="submit" ${disabled ? "disabled" : ""}>发送</button>
-            </div>
-          </form>
         </article>
       `;
     })
     .join("");
-
-  list.querySelectorAll(".job-follow-up-input").forEach((input) => {
-    if (input.value) autosizeTextarea(input);
-  });
-
-  if (focusedParentJobId) {
-    const nextInput = list.querySelector(
-      `[data-parent-job-id="${focusedParentJobId}"] .job-follow-up-input`,
-    );
-    if (nextInput && !nextInput.disabled) {
-      nextInput.focus();
-      if (selectionStart != null && selectionEnd != null) {
-        nextInput.setSelectionRange(selectionStart, selectionEnd);
-      }
-    }
-  }
 }
 
 function canFollowUp(job) {
   return Boolean(job?.agentId) && !["queued", "running"].includes(job.status);
+}
+
+function canStopJob(job) {
+  return Boolean(job) && ["queued", "running"].includes(job.status);
 }
 
 function findJob(jobId) {
@@ -251,13 +199,189 @@ function updateFollowUpComposer(job) {
   hint.textContent = "基于当前会话继续对话 · Enter 发送，Shift+Enter 换行";
 }
 
+function updateStopButton(job) {
+  const button = $("#stopJobButton");
+  if (!button) return;
+
+  const canStop = canStopJob(job);
+  const isStopping = Boolean(job) && state.stoppingJobIds.has(job.id);
+  button.classList.toggle("hidden", !canStop);
+  button.disabled = !canStop || isStopping;
+  button.textContent = isStopping ? "停止中…" : "停止";
+}
+
+function getConversationRootId(jobId) {
+  const seen = new Set();
+  let current = findJob(jobId);
+
+  while (current?.parentJobId && !seen.has(current.id)) {
+    seen.add(current.id);
+    const parent = findJob(current.parentJobId);
+    if (!parent) break;
+    current = parent;
+  }
+
+  return current?.id || jobId;
+}
+
+function getConversationChain(jobId) {
+  const rootId = getConversationRootId(jobId);
+  const related = [];
+  const byParent = new Map();
+
+  for (const job of state.jobs) {
+    if (job.parentJobId) {
+      const siblings = byParent.get(job.parentJobId) || [];
+      siblings.push(job);
+      byParent.set(job.parentJobId, siblings);
+    }
+  }
+
+  const queue = [];
+  const root = findJob(rootId);
+  if (root) queue.push(root);
+
+  const seen = new Set();
+  while (queue.length > 0) {
+    const job = queue.shift();
+    if (!job || seen.has(job.id)) continue;
+    seen.add(job.id);
+    related.push(job);
+    const children = (byParent.get(job.id) || []).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    queue.push(...children);
+  }
+
+  // 详情接口刚返回的当前任务可能比列表更新（尤其是 logs），用最新副本覆盖
+  if (state.currentJob && seen.has(state.currentJob.id)) {
+    const index = related.findIndex((job) => job.id === state.currentJob.id);
+    if (index >= 0) related[index] = state.currentJob;
+  }
+
+  return related.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+}
+
+function appendAssistantMessage(messages, text, time) {
+  const content = String(text || "");
+  if (!content.trim()) return;
+
+  const previous = messages.at(-1);
+  if (previous?.role === "assistant") {
+    previous.text += content;
+    previous.time = time || previous.time;
+    return;
+  }
+
+  messages.push({
+    role: "assistant",
+    time: time || new Date().toISOString(),
+    text: content.trimStart(),
+  });
+}
+
+function buildChatMessages(jobs) {
+  const messages = [];
+
+  for (const job of jobs) {
+    messages.push({
+      role: "user",
+      time: job.createdAt,
+      text: job.prompt,
+    });
+
+    let sawAssistant = false;
+    for (const log of job.logs || []) {
+      if (log.level === "assistant") {
+        sawAssistant = true;
+        appendAssistantMessage(messages, log.message, log.time);
+        continue;
+      }
+
+      if (log.level === "error") {
+        messages.push({
+          role: "system",
+          level: "error",
+          time: log.time,
+          text: log.message,
+        });
+      }
+      // info 日志（任务创建/启动等）不混入对话气泡
+    }
+
+    // 兼容旧任务：流日志缺失时，用最终 result 兜底展示 AI 回复
+    if (!sawAssistant && typeof job.result === "string" && job.result.trim()) {
+      appendAssistantMessage(messages, job.result, job.finishedAt || job.updatedAt);
+    }
+
+    if (!sawAssistant && !job.result && ["queued", "running"].includes(job.status)) {
+      messages.push({
+        role: "system",
+        level: "info",
+        time: job.updatedAt || job.startedAt || job.createdAt,
+        text: "AI 正在回复…",
+      });
+    }
+  }
+
+  return messages;
+}
+
+function renderChatMessages(job) {
+  const output = $("#chatOutput");
+  if (!job) {
+    output.innerHTML = "";
+    return;
+  }
+
+  const messages = buildChatMessages(getConversationChain(job.id));
+  if (messages.length === 0) {
+    output.innerHTML = '<p class="empty">暂无会话内容</p>';
+    return;
+  }
+
+  const wasNearBottom = output.scrollHeight - output.scrollTop - output.clientHeight < 80;
+
+  output.innerHTML = messages
+    .map((message) => {
+      const time = new Date(message.time).toLocaleTimeString();
+      if (message.role === "system") {
+        return `
+          <div class="chat-system chat-system-${message.level}">
+            <span>${escapeHtml(message.text)}</span>
+            <time>${escapeHtml(time)}</time>
+          </div>
+        `;
+      }
+
+      const side = message.role === "user" ? "right" : "left";
+      const label = message.role === "user" ? "我" : "AI";
+      return `
+        <div class="chat-row chat-${side}">
+          <div class="chat-bubble chat-bubble-${message.role}">
+            <div class="chat-meta">
+              <span>${label}</span>
+              <time>${escapeHtml(time)}</time>
+            </div>
+            <div class="chat-text">${escapeHtml(message.text)}</div>
+          </div>
+        </div>
+      `;
+    })
+    .join("");
+
+  if (wasNearBottom || !output.dataset.ready) {
+    output.scrollTop = output.scrollHeight;
+    output.dataset.ready = "1";
+  }
+}
+
 function renderCurrentJob(job) {
   state.currentJob = job || null;
 
   if (!job) {
     $("#currentJob").textContent = "暂无任务";
-    $("#logOutput").textContent = "";
+    renderChatMessages(null);
     updateFollowUpComposer(null);
+    updateStopButton(null);
     return;
   }
 
@@ -266,8 +390,9 @@ function renderCurrentJob(job) {
     <span class="status status-${job.status}">${statusText(job.status)}</span>
     <p class="meta">${escapeHtml(job.promptSummary)}</p>
   `;
-  $("#logOutput").textContent = formatLogs(job.logs);
+  renderChatMessages(job);
   updateFollowUpComposer(job);
+  updateStopButton(job);
 }
 
 function startPollingCurrentJob() {
@@ -301,31 +426,12 @@ async function submitFollowUp(prompt, parentJobId) {
 
   state.followUpDrafts.delete(job.id);
   state.currentJobId = created.id;
+  const chatOutput = $("#chatOutput");
+  if (chatOutput) delete chatOutput.dataset.ready;
   renderCurrentJob(created);
   $("#followUpInput").value = "";
   await refreshData();
   startPollingCurrentJob();
-}
-
-function formatLogs(logs) {
-  const lines = [];
-
-  for (const log of logs) {
-    const time = new Date(log.time).toLocaleTimeString();
-    if (log.level === "assistant") {
-      const previous = lines.at(-1);
-      if (previous?.level === "assistant") {
-        previous.message += log.message;
-      } else {
-        lines.push({ level: "assistant", message: `[${time}] assistant:\n${log.message.trimStart()}` });
-      }
-      continue;
-    }
-
-    lines.push({ level: log.level, message: `[${time}] ${log.level}: ${log.message}` });
-  }
-
-  return lines.map((line) => line.message).join("\n\n");
 }
 
 async function refreshData() {
@@ -349,6 +455,32 @@ async function refreshCurrentJob() {
     window.clearInterval(state.pollingTimer);
     state.pollingTimer = null;
     await refreshData();
+  }
+}
+
+async function stopCurrentJob() {
+  const job = state.currentJob;
+  if (!canStopJob(job)) {
+    showToast("当前任务不能停止");
+    return;
+  }
+
+  state.stoppingJobIds.add(job.id);
+  updateStopButton(job);
+  try {
+    const { job: updatedJob } = await api(`/api/jobs/${job.id}/cancel`, {
+      method: "POST",
+      body: "{}",
+    });
+    state.currentJob = updatedJob;
+    renderCurrentJob(updatedJob);
+    await refreshData();
+    showToast("已请求停止任务");
+  } catch (error) {
+    showToast(error.message);
+  } finally {
+    state.stoppingJobIds.delete(job.id);
+    updateStopButton(state.currentJob);
   }
 }
 
@@ -391,6 +523,10 @@ $("#logoutButton").addEventListener("click", async () => {
 
 $("#refreshButton").addEventListener("click", () => {
   refreshData().catch((error) => showToast(error.message));
+});
+
+$("#stopJobButton").addEventListener("click", () => {
+  stopCurrentJob().catch((error) => showToast(error.message));
 });
 
 $("#projectSearchInput").addEventListener("input", renderProjects);
@@ -465,57 +601,18 @@ $("#followUpInput").addEventListener("input", (event) => {
 });
 
 $("#jobList").addEventListener("click", async (event) => {
-  if (event.target.closest(".follow-up-composer")) return;
   const item = event.target.closest(".job-item");
   if (!item) return;
-  state.currentJobId = item.dataset.jobId;
+
+  const clickedId = item.dataset.jobId;
+  const chain = getConversationChain(clickedId);
+  const tip = chain.at(-1);
+  state.currentJobId = tip?.id || clickedId;
+
+  const chatOutput = $("#chatOutput");
+  if (chatOutput) delete chatOutput.dataset.ready;
   await refreshCurrentJob();
   renderJobs();
-});
-
-$("#jobList").addEventListener("submit", async (event) => {
-  const form = event.target.closest(".job-follow-up");
-  if (!form) return;
-  event.preventDefault();
-
-  const parentJobId = form.dataset.parentJobId;
-  const input = form.querySelector(".job-follow-up-input");
-  const button = form.querySelector('button[type="submit"]');
-  const prompt = input?.value.trim() || "";
-
-  if (!prompt) {
-    showToast("请输入后续安排");
-    return;
-  }
-
-  button.disabled = true;
-  input.disabled = true;
-  try {
-    await submitFollowUp(prompt, parentJobId);
-  } catch (error) {
-    showToast(error.message);
-    button.disabled = false;
-    input.disabled = false;
-  }
-});
-
-$("#jobList").addEventListener("keydown", (event) => {
-  if (!event.target.classList.contains("job-follow-up-input")) return;
-  if (event.key !== "Enter" || event.shiftKey) return;
-  event.preventDefault();
-  event.target.closest(".job-follow-up")?.requestSubmit();
-});
-
-$("#jobList").addEventListener("input", (event) => {
-  if (!event.target.classList.contains("job-follow-up-input")) return;
-  autosizeTextarea(event.target);
-  const parentJobId = event.target.closest("[data-parent-job-id]")?.dataset.parentJobId;
-  if (!parentJobId) return;
-  if (event.target.value.trim()) {
-    state.followUpDrafts.set(parentJobId, event.target.value);
-  } else {
-    state.followUpDrafts.delete(parentJobId);
-  }
 });
 
 function isStandaloneDisplay() {

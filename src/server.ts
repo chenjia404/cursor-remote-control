@@ -7,7 +7,7 @@ import fastifyStatic from "@fastify/static";
 import { z } from "zod";
 import { clearSession, issueSession, requireAuth, requireCsrf, verifyPassword } from "./auth.js";
 import { assertRequiredConfig, config } from "./config.js";
-import { runCursorJob } from "./cursorAgent.js";
+import { cancelCursorJob, runCursorJob } from "./cursorAgent.js";
 import { createJob, getJob, listJobs, loadJobs } from "./jobs.js";
 import { getProjectById, listProjects } from "./projects.js";
 
@@ -128,6 +128,24 @@ async function start(): Promise<void> {
     });
 
     reply.code(202).send({ job });
+  });
+
+  app.post("/api/jobs/:id/cancel", { preHandler: requireCsrf }, async (request, reply) => {
+    const params = z.object({ id: z.string().uuid() }).parse(request.params);
+    const job = getJob(params.id);
+    if (!job) {
+      reply.code(404).send({ error: "任务不存在" });
+      return;
+    }
+
+    try {
+      const updatedJob = await cancelCursorJob(params.id);
+      return { job: updatedJob };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      reply.code(409).send({ error: message });
+      return;
+    }
   });
 
   app.setErrorHandler((error, _request, reply) => {
