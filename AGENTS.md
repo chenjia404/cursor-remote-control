@@ -63,7 +63,8 @@ pnpm generate-icons
 - 不要添加任意 Shell 输入框。
 - 不要允许网页直接执行系统命令。
 - 不要把 `.env`、管理员密码、`CURSOR_API_KEY`、Session 密钥或 `data/jobs.json` 写入 Git。
-- `PROJECT_ROOTS` 只应配置项目根目录，例如 `D:\code;C:\code`，不要配置整个系统盘。
+- `PROJECT_ROOTS` 只应配置本机 Windows 项目根目录，例如 `E:\code;D:\code;C:\code`，不要配置整个系统盘，也不要使用 Docker 容器内路径。
+
 - 项目路径必须经过 `src/projects.ts` 的根目录校验后才能传给 Cursor SDK。
 - 公网访问时必须使用 HTTPS，并把 `COOKIE_SECURE=true`。
 - 新增接口如果会改变状态，必须经过登录和 CSRF 校验。
@@ -110,4 +111,7 @@ Invoke-RestMethod -Uri "http://127.0.0.1:20267/health" | ConvertTo-Json -Compres
 
 ## Docker 注意事项
 
-项目提供可选 `docker-compose.yml`，镜像应继续使用 Alpine 版本。由于本项目依赖 Cursor SDK 本地模式访问 Windows 本机项目和凭据，默认更推荐直接在 Windows 本机运行。
+仓库保留可选 `Dockerfile` / `docker-compose.yml`（Alpine），仅作备用，**日常不要用 Docker 跑本服务**。Cursor SDK 本地模式依赖 Windows 本机项目、凭据和开发环境，容器里通常缺这些组件。
+
+默认运行方式是 Windows 本机 `pnpm dev` 或 `pnpm build && pnpm start`。若有人改了 compose，切回宿主机前必须把 `.env` 的 `PROJECT_ROOTS` 改回 Windows 路径，并停止容器以免占用 `20267`。
+

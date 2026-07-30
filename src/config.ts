@@ -29,7 +29,8 @@ const envSchema = z.object({
   ADMIN_USERNAME: z.string().default("admin"),
   ADMIN_PASSWORD_HASH: z.string().optional(),
   SESSION_SECRET: z.string().optional(),
-  PROJECT_ROOTS: z.string().default("D:\\code"),
+  PROJECT_ROOTS: z.string().default("E:\\code;D:\\code;C:\\code"),
+
   DATA_DIR: z.string().default("./data"),
   COOKIE_SECURE: z
     .string()

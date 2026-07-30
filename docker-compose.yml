@@ -1,3 +1,6 @@
+# 不推荐：日常请在 Windows 本机用 pnpm 运行本服务。
+# Cursor SDK 本地模式需要本机项目、凭据和开发环境，容器内通常缺失。
+# 数据挂载到 ./data；切回宿主机前请把 .env 的 PROJECT_ROOTS 改回 Windows 路径。
 services:
   cursor-remote-control:
     build: .
@@ -10,10 +13,11 @@ services:
     environment:
       HOST: 0.0.0.0
       PORT: 20267
-      PROJECT_ROOTS: /workspace/d-code;/workspace/c-code
+      PROJECT_ROOTS: /workspace/e-code;/workspace/d-code;/workspace/c-code
       DATA_DIR: /app/data
       COOKIE_SECURE: "true"
     volumes:
       - ./data:/app/data
+      - "E:\\code:/workspace/e-code"
       - "D:\\code:/workspace/d-code"
       - "C:\\code:/workspace/c-code"

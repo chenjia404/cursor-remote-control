@@ -1,3 +1,4 @@
+# 不推荐日常使用：请优先在 Windows 本机 pnpm 运行。见 README。
 FROM node:22-alpine
 
 WORKDIR /app

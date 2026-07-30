@@ -1,6 +1,8 @@
 # Cursor 远程控制台
 
-一个运行在本机的 Web 控制台，用手机浏览器提交任务给 Cursor Agent，让它修改本机项目。
+一个运行在 **Windows 本机** 的 Web 控制台，用手机浏览器提交任务给 Cursor Agent，让它修改本机项目。
+
+推荐直接用本机 Node.js + pnpm 运行。Cursor SDK 本地模式需要访问本机项目、凭据和开发环境；Docker 容器里往往缺少这些组件，因此 Docker 仅作可选备用，日常请用宿主机启动。
 
 ## 功能
 
@@ -12,7 +14,16 @@
 - 支持 PWA，可在手机浏览器中安装到主屏幕。
 - 不提供任意 Shell 输入框，网页不能直接执行系统命令。
 
+## 环境要求
+
+- Windows 本机（非容器）
+- Node.js 22+
+- [pnpm](https://pnpm.io/) 最新版
+- 本机已可用的 Cursor / Cursor SDK 本地环境与 `CURSOR_API_KEY`
+
 ## 初始化
+
+在 PowerShell 7 中执行（建议已设置 UTF-8）：
 
 ```powershell
 cd D:\code\cursor-remote-control
@@ -27,11 +38,11 @@ pnpm init-admin
 
 ```env
 CURSOR_API_KEY=cursor_xxx
-PROJECT_ROOTS=D:\code;C:\code
+PROJECT_ROOTS=E:\code;D:\code;C:\code
 COOKIE_SECURE=false
 ```
 
-`PROJECT_ROOTS` 使用英文分号分隔多个目录。建议只配置项目根目录，不要配置整个系统盘。
+`PROJECT_ROOTS` 使用英文分号分隔多个目录，路径为本机 Windows 路径。建议只配置项目根目录，不要配置整个系统盘。
 
 如果通过 HTTPS 公网域名访问，请设置：
 
@@ -40,7 +51,7 @@ COOKIE_SECURE=true
 PUBLIC_BASE_URL=
 ```
 
-## 启动
+## 启动（宿主机）
 
 开发模式：
 
@@ -61,7 +72,14 @@ pnpm start
 http://127.0.0.1:20267
 ```
 
-公网反代时，把 HTTPS 域名转发到本机 `20267` 端口。
+公网反代时，把 HTTPS 域名转发到本机 `20267` 端口。运行时数据写在项目下的 `data/` 目录（不要用 Docker named volume）。
+
+从 Docker 切回宿主机时：
+
+1. 停止并移除正在运行的 compose 服务（例如 `docker compose down`）。
+2. 确认 `.env` 里 `PROJECT_ROOTS` 已是 Windows 路径（如 `E:\code;D:\code;C:\code`），不要再使用容器内的 `/workspace/...`。
+3. `DATA_DIR` 保持 `./data`，可继续使用已有 `data/` 下的任务与会话文件。
+4. 执行 `pnpm install`（如尚未安装依赖），再 `pnpm build && pnpm start` 或 `pnpm dev`。
 
 ## 安装到手机
 
@@ -75,15 +93,17 @@ PWA 安装依赖：
 
 图标变更后可执行 `pnpm generate-icons` 重新从 SVG 生成 PNG。
 
-## Docker
+## Docker（不推荐，仅备用）
 
-项目提供可选 `docker-compose.yml`，端口为 `20267:20267`，镜像基于 `node:alpine`。
+仓库仍保留 `Dockerfile`、`docker-compose.yml`，镜像基于 `node:alpine`，端口 `20267:20267`，数据通过绑定挂载到 `./data`。
 
-本项目更推荐直接在 Windows 本机运行，因为 Cursor SDK 本地模式需要访问本机项目、凭据和开发环境。使用 Docker 时需要确认容器内的项目路径、Cursor SDK 运行环境和密钥都可用。
+**不建议日常使用。** 容器内通常缺少 Cursor 本地 Agent、凭据与完整开发工具链，任务容易失败或行为与本机不一致。仅在明确需要隔离实验、且已自行解决容器内 Cursor SDK 环境时再考虑。
+
+若仍要用 compose 试跑，请注意：compose 会把 `PROJECT_ROOTS` 覆盖成容器内路径（如 `/workspace/d-code`），并挂载 Windows 盘符；这与宿主机 `.env` 中的 Windows 路径不是同一套配置，切回本机运行前务必改回 Windows 路径。
 
 ## 安全注意事项
 
 - 不要把 `.env`、`data/` 下的运行时数据（如 `jobs.json`、`selected-projects.json`）或管理员密码提交到 Git。
 - 公网访问必须使用 HTTPS，并把 `COOKIE_SECURE` 设置为 `true`。
-- `PROJECT_ROOTS` 不要设置为整个系统盘，建议设置为 `D:\code;C:\code` 这类项目根目录列表。
+- `PROJECT_ROOTS` 不要设置为整个系统盘，建议设置为 `E:\code;D:\code;C:\code` 这类项目根目录列表。
 - 控制台只适合个人使用，不建议给多人共享管理员账号。

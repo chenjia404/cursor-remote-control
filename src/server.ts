@@ -5,7 +5,14 @@ import helmet from "@fastify/helmet";
 import rateLimit from "@fastify/rate-limit";
 import fastifyStatic from "@fastify/static";
 import { z } from "zod";
-import { clearSession, issueSession, requireAuth, requireCsrf, verifyPassword } from "./auth.js";
+import {
+  clearSession,
+  issueSession,
+  loadActiveSession,
+  requireAuth,
+  requireCsrf,
+  verifyPassword,
+} from "./auth.js";
 import { assertRequiredConfig, config } from "./config.js";
 import { cancelCursorJob, runCursorJob } from "./cursorAgent.js";
 import { createJob, getJob, listJobs, loadJobs, recoverInterruptedJobs } from "./jobs.js";
@@ -45,7 +52,7 @@ function getRequestIp(requestIp: string | undefined): string {
 
 async function start(): Promise<void> {
   assertRequiredConfig();
-  await Promise.all([loadJobs(), loadSelectedProjects()]);
+  await Promise.all([loadJobs(), loadSelectedProjects(), loadActiveSession()]);
   const recoveredCount = recoverInterruptedJobs();
   if (recoveredCount > 0) {
     console.warn(`已将 ${recoveredCount} 个因进程重启而中断的任务标记为失败`);
@@ -99,12 +106,12 @@ async function start(): Promise<void> {
       return;
     }
 
-    const csrfToken = issueSession(reply, body.username);
+    const csrfToken = await issueSession(reply, body.username);
     return { username: body.username, csrfToken };
   });
 
-  app.post("/api/logout", { preHandler: requireCsrf }, async (_request, reply) => {
-    clearSession(reply);
+  app.post("/api/logout", { preHandler: requireCsrf }, async (request, reply) => {
+    await clearSession(reply, request.sessionId);
     return { ok: true };
   });
 
