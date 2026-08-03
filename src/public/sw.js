@@ -1,9 +1,11 @@
-const APP_VERSION = "0.2.4";
+const APP_VERSION = "0.2.6";
 const CACHE_NAME = `cursor-remote-control-v${APP_VERSION}`;
 const APP_SHELL = [
   "/",
   `/styles.css?v=${APP_VERSION}`,
   `/app.js?v=${APP_VERSION}`,
+  "/vendor/marked.esm.js",
+  "/vendor/purify.es.mjs",
   "/manifest.webmanifest",
   "/icons/icon.svg",
   "/icons/icon-192.png",
@@ -57,6 +59,7 @@ self.addEventListener("fetch", (event) => {
     requestUrl.pathname === "/styles.css" ||
     requestUrl.pathname === "/sw.js" ||
     requestUrl.pathname === "/version.js" ||
+    requestUrl.pathname.startsWith("/vendor/") ||
     requestUrl.pathname === "/manifest.webmanifest"
   ) {
     event.respondWith(

@@ -1,4 +1,18 @@
+import { marked } from "./vendor/marked.esm.js";
+import DOMPurify from "./vendor/purify.es.mjs";
 import { APP_VERSION } from "./version.js";
+
+marked.setOptions({
+  gfm: true,
+  breaks: true,
+});
+
+DOMPurify.addHook("afterSanitizeAttributes", (node) => {
+  if (node.tagName === "A" && node.hasAttribute("href")) {
+    node.setAttribute("target", "_blank");
+    node.setAttribute("rel", "noopener noreferrer");
+  }
+});
 
 const MODE_LABELS = {
   agent: "Agent",
@@ -242,6 +256,21 @@ function escapeHtml(value) {
     .replaceAll(">", "&gt;")
     .replaceAll('"', "&quot;")
     .replaceAll("'", "&#39;");
+}
+
+function renderMarkdown(value) {
+  const html = marked.parse(String(value || ""), { async: false });
+  return DOMPurify.sanitize(html, {
+    USE_PROFILES: { html: true },
+    ADD_ATTR: ["target"],
+  });
+}
+
+function formatChatBody(role, text) {
+  if (role === "assistant" || role === "thinking") {
+    return `<div class="chat-text chat-markdown">${renderMarkdown(text)}</div>`;
+  }
+  return `<div class="chat-text">${escapeHtml(text)}</div>`;
 }
 
 function rememberFollowUpDraft() {
@@ -517,7 +546,7 @@ function renderChatMessages(job) {
                 <span>思考过程</span>
                 <time>${escapeHtml(time)}</time>
               </summary>
-              <div class="chat-text">${escapeHtml(message.text)}</div>
+              ${formatChatBody("thinking", message.text)}
             </details>
           </div>
         `;
@@ -532,7 +561,7 @@ function renderChatMessages(job) {
               <span>${label}</span>
               <time>${escapeHtml(time)}</time>
             </div>
-            <div class="chat-text">${escapeHtml(message.text)}</div>
+            ${formatChatBody(message.role, message.text)}
           </div>
         </div>
       `;

@@ -82,9 +82,9 @@ async function start(): Promise<void> {
   await app.register(fastifyStatic, {
     root: path.join(config.appRoot, "src", "public"),
     prefix: "/",
-    setHeaders(res, filePath) {
+    setHeaders(reply, filePath) {
       if (filePath.endsWith(".webmanifest")) {
-        res.setHeader("Content-Type", "application/manifest+json; charset=utf-8");
+        reply.header("Content-Type", "application/manifest+json; charset=utf-8");
       }
     },
   });
