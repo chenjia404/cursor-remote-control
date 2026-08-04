@@ -53,6 +53,8 @@ pnpm generate-icons
 - `src/jobs.ts`：任务历史、任务状态、日志持久化。
 - `src/cursorAgent.ts`：Cursor SDK 本地 Agent 执行封装。
 - `src/public/`：移动端 Web 页面和 PWA 静态资源。
+- `src/public/i18n.js`：前端中英文文案与语言切换（偏好保存在 localStorage）。
+- `README.en.md`：英文说明文档，与 `README.md` 互链。
 - `scripts/init-admin.ts`：生成管理员随机密码、密码哈希和 Session 密钥。
 - `scripts/generate-icons.ts`：从 SVG 生成 PWA PNG 图标。
 - `.env.example`：配置模板，不包含真实密钥。

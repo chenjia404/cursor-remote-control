@@ -1,6 +1,10 @@
 # Cursor 远程控制台
 
+[中文](./README.md) | [English](./README.en.md)
+
 一个运行在 **Windows 本机** 的 Web 控制台，用手机浏览器提交任务给 Cursor Agent，让它修改本机项目。
+
+界面右上角可切换中文 / English；语言偏好会保存在浏览器本地。
 
 推荐直接用本机 Node.js + pnpm 运行。Cursor SDK 本地模式需要访问本机项目、凭据和开发环境；Docker 容器里往往缺少这些组件，因此 Docker 仅作可选备用，日常请用宿主机启动。
 
@@ -14,6 +18,7 @@
 - 通过 Cursor SDK 的本地模式在项目目录中执行 Agent 任务。
 - 保存任务历史、运行状态、Agent ID、Run ID 和日志。
 - 支持 PWA，可在手机浏览器中安装到主屏幕。
+- 界面支持中文 / English 切换。
 - 不提供任意 Shell 输入框，网页不能直接执行系统命令。
 
 ## 环境要求

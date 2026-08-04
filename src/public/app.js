@@ -1,6 +1,15 @@
 import { marked } from "./vendor/marked.esm.js";
 import DOMPurify from "./vendor/purify.es.mjs";
 import { APP_VERSION } from "./version.js";
+import {
+  applyDomI18n,
+  getLocale,
+  initLocale,
+  localeTag,
+  setLocale,
+  t,
+  translateApiError,
+} from "./i18n.js";
 
 marked.setOptions({
   gfm: true,
@@ -41,12 +50,39 @@ const state = {
   },
 };
 
+initLocale();
+
 const versionEl = document.querySelector("#appVersion");
 if (versionEl) {
   versionEl.textContent = `v${APP_VERSION}`;
 }
 
 const $ = (selector) => document.querySelector(selector);
+
+function formatDateTime(value) {
+  return new Date(value).toLocaleString(localeTag());
+}
+
+function formatTime(value) {
+  return new Date(value).toLocaleTimeString(localeTag());
+}
+
+function updateLangSwitch() {
+  const locale = getLocale();
+  document.querySelectorAll("#langSwitch .lang-option").forEach((button) => {
+    button.classList.toggle("active", button.dataset.lang === locale);
+  });
+}
+
+function applyLocale(locale) {
+  setLocale(locale);
+  applyDomI18n();
+  updateLangSwitch();
+  renderProjects();
+  renderJobs();
+  renderBrowsePanel();
+  renderCurrentJob(state.currentJob);
+}
 
 function loadSavedMode() {
   try {
@@ -105,7 +141,7 @@ async function api(path, options = {}) {
 
   const data = await response.json().catch(() => ({}));
   if (!response.ok) {
-    throw new Error(data.error || "请求失败");
+    throw new Error(translateApiError(data.error || t("toast.requestFailed")));
   }
 
   return data;
@@ -128,19 +164,19 @@ function renderProjects() {
   });
 
   if (state.projects.length === 0) {
-    select.innerHTML = '<option value="">暂无已选项目，请先按目录打开并确认</option>';
-    if (hint) hint.textContent = "下拉列表只显示已确认过的项目。新项目请点「按目录打开」浏览并确认。";
+    select.innerHTML = `<option value="">${escapeHtml(t("project.noneSelected"))}</option>`;
+    if (hint) hint.textContent = t("submit.projectHint");
     return;
   }
 
   if (projects.length === 0) {
-    select.innerHTML = '<option value="">没有匹配的已选项目</option>';
+    select.innerHTML = `<option value="">${escapeHtml(t("project.noMatch"))}</option>`;
     return;
   }
 
   select.innerHTML = projects
     .map((project) => {
-      const modifiedAt = project.modifiedAt ? new Date(project.modifiedAt).toLocaleString() : "未知时间";
+      const modifiedAt = project.modifiedAt ? formatDateTime(project.modifiedAt) : t("project.unknownTime");
       return `<option value="${project.id}">${escapeHtml(project.name)} · ${escapeHtml(modifiedAt)} · ${escapeHtml(project.path)}</option>`;
     })
     .join("");
@@ -163,25 +199,25 @@ function renderBrowsePanel() {
   const selectButton = $("#browseSelectButton");
   const { currentPath, currentIsProject, entries, loading } = state.browse;
 
-  pathEl.textContent = currentPath || "选择允许的根目录开始浏览";
+  pathEl.textContent = currentPath || t("submit.browseRootHint");
   // 已进入具体目录时允许返回；在某个 PROJECT_ROOT 顶层时回到根列表
   upButton.disabled = loading || !currentPath;
   selectButton.disabled = loading || !currentPath || !currentIsProject;
-  selectButton.textContent = currentIsProject ? "确认当前目录为项目" : "当前目录不是有效项目";
+  selectButton.textContent = currentIsProject ? t("submit.browseConfirm") : t("submit.browseNotProject");
 
   if (loading) {
-    listEl.innerHTML = '<p class="browse-empty">正在加载目录…</p>';
+    listEl.innerHTML = `<p class="browse-empty">${escapeHtml(t("project.browseLoading"))}</p>`;
     return;
   }
 
   if (entries.length === 0) {
-    listEl.innerHTML = '<p class="browse-empty">此目录下没有可进入的子文件夹</p>';
+    listEl.innerHTML = `<p class="browse-empty">${escapeHtml(t("project.browseEmpty"))}</p>`;
     return;
   }
 
   listEl.innerHTML = entries
     .map((entry) => {
-      const badge = entry.isProject ? '<span class="browse-badge">可确认</span>' : "";
+      const badge = entry.isProject ? `<span class="browse-badge">${escapeHtml(t("project.confirmable"))}</span>` : "";
       return `
         <button type="button" class="browse-item" data-browse-path="${escapeHtml(entry.path)}" data-is-project="${entry.isProject ? "1" : "0"}">
           <span class="browse-item-main">
@@ -216,7 +252,7 @@ async function loadBrowse(targetPath) {
 
 async function confirmBrowseSelection(projectPath) {
   if (!projectPath) {
-    showToast("请先进入要打开的项目目录");
+    showToast(t("project.enterFirst"));
     return;
   }
 
@@ -230,7 +266,7 @@ async function confirmBrowseSelection(projectPath) {
     await refreshData();
     $("#projectSelect").value = project.id;
     setBrowsePanelOpen(false);
-    showToast(`已确认项目：${project.name}`);
+    showToast(t("project.confirmed", { name: project.name }));
   } catch (error) {
     showToast(error.message);
   } finally {
@@ -239,14 +275,9 @@ async function confirmBrowseSelection(projectPath) {
 }
 
 function statusText(status) {
-  const map = {
-    queued: "排队中",
-    running: "运行中",
-    finished: "已完成",
-    error: "失败",
-    cancelled: "已取消",
-  };
-  return map[status] || status;
+  const key = `status.${status}`;
+  const translated = t(key);
+  return translated === key ? status : translated;
 }
 
 function escapeHtml(value) {
@@ -296,14 +327,14 @@ function renderJobs() {
   rememberFollowUpDraft();
 
   parentSelect.innerHTML =
-    '<option value="">新建会话</option>' +
+    `<option value="">${escapeHtml(t("submit.newSession"))}</option>` +
     state.jobs
       .filter((job) => job.agentId)
       .map((job) => `<option value="${job.id}">${escapeHtml(job.project.name)} - ${escapeHtml(job.promptSummary)}</option>`)
       .join("");
 
   if (state.jobs.length === 0) {
-    list.innerHTML = '<p class="empty">暂无历史任务</p>';
+    list.innerHTML = `<p class="empty">${escapeHtml(t("history.empty"))}</p>`;
     return;
   }
 
@@ -315,7 +346,7 @@ function renderJobs() {
           <div class="job-item-summary">
             <strong>${escapeHtml(job.project.name)}<span class="status status-${job.status}">${statusText(job.status)}</span>${modeBadge(job.mode)}</strong>
             <div>${escapeHtml(job.promptSummary)}</div>
-            <div class="meta">${new Date(job.createdAt).toLocaleString()} · ${job.id}</div>
+            <div class="meta">${escapeHtml(formatDateTime(job.createdAt))} · ${job.id}</div>
           </div>
         </article>
       `;
@@ -362,20 +393,20 @@ function updateFollowUpComposer(job) {
   if (["queued", "running"].includes(job.status)) {
     button.disabled = true;
     input.disabled = true;
-    hint.textContent = "任务进行中，完成后可继续安排";
+    hint.textContent = t("session.followUpHintBusy");
     return;
   }
 
   if (!job.agentId) {
     button.disabled = true;
     input.disabled = true;
-    hint.textContent = "该任务没有可继续的会话";
+    hint.textContent = t("session.followUpHintNoAgent");
     return;
   }
 
   button.disabled = false;
   input.disabled = false;
-  hint.textContent = "基于当前会话继续对话 · Enter 发送，Shift+Enter 换行";
+  hint.textContent = t("session.followUpHintReady");
 }
 
 function updateStopButton(job) {
@@ -386,7 +417,7 @@ function updateStopButton(job) {
   const isStopping = Boolean(job) && state.stoppingJobIds.has(job.id);
   button.classList.toggle("hidden", !canStop);
   button.disabled = !canStop || isStopping;
-  button.textContent = isStopping ? "停止中…" : "停止";
+  button.textContent = isStopping ? t("session.stopping") : t("session.stop");
 }
 
 function getConversationRootId(jobId) {
@@ -503,7 +534,7 @@ function buildChatMessages(jobs) {
         role: "system",
         level: "info",
         time: job.updatedAt || job.startedAt || job.createdAt,
-        text: "AI 正在回复…",
+        text: t("session.aiTyping"),
       });
     }
   }
@@ -520,7 +551,7 @@ function renderChatMessages(job) {
 
   const messages = buildChatMessages(getConversationChain(job.id));
   if (messages.length === 0) {
-    output.innerHTML = '<p class="empty">暂无会话内容</p>';
+    output.innerHTML = `<p class="empty">${escapeHtml(t("session.noChat"))}</p>`;
     return;
   }
 
@@ -528,7 +559,7 @@ function renderChatMessages(job) {
 
   output.innerHTML = messages
     .map((message) => {
-      const time = new Date(message.time).toLocaleTimeString();
+      const time = formatTime(message.time);
       if (message.role === "system") {
         return `
           <div class="chat-system chat-system-${message.level}">
@@ -543,7 +574,7 @@ function renderChatMessages(job) {
           <div class="chat-row chat-left">
             <details class="chat-thinking" open>
               <summary>
-                <span>思考过程</span>
+                <span>${escapeHtml(t("session.thinking"))}</span>
                 <time>${escapeHtml(time)}</time>
               </summary>
               ${formatChatBody("thinking", message.text)}
@@ -553,12 +584,12 @@ function renderChatMessages(job) {
       }
 
       const side = message.role === "user" ? "right" : "left";
-      const label = message.role === "user" ? "我" : "AI";
+      const label = message.role === "user" ? t("session.me") : t("session.ai");
       return `
         <div class="chat-row chat-${side}">
           <div class="chat-bubble chat-bubble-${message.role}">
             <div class="chat-meta">
-              <span>${label}</span>
+              <span>${escapeHtml(label)}</span>
               <time>${escapeHtml(time)}</time>
             </div>
             ${formatChatBody(message.role, message.text)}
@@ -578,7 +609,7 @@ function renderCurrentJob(job) {
   state.currentJob = job || null;
 
   if (!job) {
-    $("#currentJob").textContent = "暂无任务";
+    $("#currentJob").textContent = t("session.empty");
     renderChatMessages(null);
     updateFollowUpComposer(null);
     updateStopButton(null);
@@ -608,11 +639,11 @@ function startPollingCurrentJob() {
 async function submitFollowUp(prompt, parentJobId) {
   const job = findJob(parentJobId);
   if (!job) {
-    showToast("请先选择一个任务");
+    showToast(t("toast.selectJob"));
     return;
   }
   if (!canFollowUp(job)) {
-    showToast("当前任务暂时无法继续安排");
+    showToast(t("toast.cannotFollowUp"));
     return;
   }
 
@@ -666,7 +697,7 @@ async function refreshCurrentJob() {
 async function stopCurrentJob() {
   const job = state.currentJob;
   if (!canStopJob(job)) {
-    showToast("当前任务不能停止");
+    showToast(t("toast.cannotStop"));
     return;
   }
 
@@ -680,7 +711,7 @@ async function stopCurrentJob() {
     state.currentJob = updatedJob;
     renderCurrentJob(updatedJob);
     await refreshData();
-    showToast("已请求停止任务");
+    showToast(t("toast.stopRequested"));
   } catch (error) {
     showToast(error.message);
   } finally {
@@ -770,11 +801,11 @@ $("#submitJobButton").addEventListener("click", async () => {
   const parentJobId = $("#parentJobSelect").value || undefined;
 
   if (!projectId) {
-    showToast("请先选择或确认一个项目");
+    showToast(t("toast.selectProject"));
     return;
   }
   if (!prompt) {
-    showToast("请输入任务指令");
+    showToast(t("toast.enterPrompt"));
     return;
   }
 
@@ -803,7 +834,7 @@ $("#followUpForm").addEventListener("submit", async (event) => {
   event.preventDefault();
   const prompt = $("#followUpInput").value.trim();
   if (!prompt) {
-    showToast("请输入后续安排");
+    showToast(t("toast.enterFollowUp"));
     return;
   }
 
@@ -895,11 +926,11 @@ function updateInstallButtonVisibility() {
 
 function showManualInstallHint() {
   if (isIosSafari()) {
-    showToast("请点分享按钮，再选择“添加到主屏幕”。");
+    showToast(t("toast.iosInstall"));
     return;
   }
 
-  showToast("请用浏览器菜单中的“安装应用 / 添加到主屏幕”。需 HTTPS 或 localhost。");
+  showToast(t("toast.manualInstall"));
 }
 
 window.addEventListener("beforeinstallprompt", (event) => {
@@ -911,7 +942,7 @@ window.addEventListener("beforeinstallprompt", (event) => {
 window.addEventListener("appinstalled", () => {
   state.installPromptEvent = null;
   updateInstallButtonVisibility();
-  showToast("已安装到设备。");
+  showToast(t("toast.installed"));
 });
 
 $("#installButton").addEventListener("click", async () => {
@@ -937,6 +968,16 @@ if ("serviceWorker" in navigator) {
   });
 }
 
+$("#langSwitch")?.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-lang]");
+  if (!button) return;
+  const next = button.dataset.lang === "en" ? "en" : "zh";
+  if (next === getLocale()) return;
+  applyLocale(next);
+});
+
+applyDomI18n();
+updateLangSwitch();
 updateInstallButtonVisibility();
 setModeSelect($("#modeSelect"), loadSavedMode());
 bootstrap();

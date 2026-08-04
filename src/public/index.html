@@ -12,126 +12,146 @@
     <link rel="icon" href="/icons/icon-192.png" type="image/png" sizes="192x192" />
     <link rel="icon" href="/icons/icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" sizes="180x180" />
-    <link rel="stylesheet" href="/styles.css?v=0.2.6" />
+    <link rel="stylesheet" href="/styles.css?v=0.2.7" />
   </head>
   <body>
     <main class="shell">
       <section class="card header-card">
         <div>
-          <p class="eyebrow">Cursor Remote Control <span id="appVersion" class="version">v0.2.6</span></p>
-          <h1>远程控制台</h1>
+          <p class="eyebrow">Cursor Remote Control <span id="appVersion" class="version">v0.2.7</span></p>
+          <h1 data-i18n="header.title">远程控制台</h1>
         </div>
         <div class="header-actions">
-          <button id="installButton" class="ghost hidden">安装</button>
-          <button id="logoutButton" class="ghost hidden">退出</button>
+          <div id="langSwitch" class="lang-switch" role="group" data-i18n-aria="header.lang">
+            <button type="button" class="lang-option" data-lang="zh">中</button>
+            <button type="button" class="lang-option" data-lang="en">EN</button>
+          </div>
+          <button id="installButton" class="ghost hidden" data-i18n="header.install">安装</button>
+          <button id="logoutButton" class="ghost hidden" data-i18n="header.logout">退出</button>
         </div>
       </section>
 
       <section id="loginView" class="card">
-        <h2>登录</h2>
+        <h2 data-i18n="login.title">登录</h2>
         <form id="loginForm" class="stack">
           <label>
-            用户名
+            <span data-i18n="login.username">用户名</span>
             <input name="username" autocomplete="username" value="admin" required />
           </label>
           <label>
-            密码
+            <span data-i18n="login.password">密码</span>
             <input name="password" type="password" autocomplete="current-password" required />
           </label>
-          <button type="submit">登录</button>
+          <button type="submit" data-i18n="login.submit">登录</button>
         </form>
       </section>
 
       <section id="appView" class="hidden">
         <section class="card stack">
           <div class="row">
-            <h2>提交任务</h2>
-            <button id="refreshButton" class="ghost">刷新</button>
+            <h2 data-i18n="submit.title">提交任务</h2>
+            <button id="refreshButton" class="ghost" data-i18n="submit.refresh">刷新</button>
           </div>
           <div class="project-picker">
             <div class="row project-picker-header">
-              <h3 class="section-title">项目</h3>
-              <button id="browseOpenButton" class="ghost" type="button">按目录打开</button>
+              <h3 class="section-title" data-i18n="submit.project">项目</h3>
+              <button id="browseOpenButton" class="ghost" type="button" data-i18n="submit.browseOpen">按目录打开</button>
             </div>
             <label>
-              搜索已选项目
-              <input id="projectSearchInput" type="search" placeholder="输入项目名或路径过滤" autocomplete="off" />
+              <span data-i18n="submit.searchLabel">搜索已选项目</span>
+              <input
+                id="projectSearchInput"
+                type="search"
+                data-i18n-placeholder="submit.searchPlaceholder"
+                placeholder="输入项目名或路径过滤"
+                autocomplete="off"
+              />
             </label>
             <label>
-              已选项目
+              <span data-i18n="submit.selectedLabel">已选项目</span>
               <select id="projectSelect"></select>
             </label>
-            <p id="projectSelectHint" class="hint">下拉列表只显示已确认过的项目。新项目请点「按目录打开」浏览并确认。</p>
+            <p id="projectSelectHint" class="hint" data-i18n="submit.projectHint">
+              下拉列表只显示已确认过的项目。新项目请点「按目录打开」浏览并确认。
+            </p>
           </div>
 
           <div id="browsePanel" class="browse-panel hidden">
             <div class="row project-picker-header">
-              <h3 class="section-title">按目录打开</h3>
-              <button id="browseCloseButton" class="ghost" type="button">关闭</button>
+              <h3 class="section-title" data-i18n="submit.browseTitle">按目录打开</h3>
+              <button id="browseCloseButton" class="ghost" type="button" data-i18n="submit.browseClose">关闭</button>
             </div>
-            <p id="browsePath" class="browse-path meta">选择允许的根目录开始浏览</p>
+            <p id="browsePath" class="browse-path meta" data-i18n="submit.browseRootHint">选择允许的根目录开始浏览</p>
             <div class="browse-toolbar">
-              <button id="browseUpButton" class="ghost" type="button" disabled>上级目录</button>
-              <button id="browseSelectButton" class="ghost" type="button" disabled>确认当前目录为项目</button>
+              <button id="browseUpButton" class="ghost" type="button" disabled data-i18n="submit.browseUp">上级目录</button>
+              <button id="browseSelectButton" class="ghost" type="button" disabled data-i18n="submit.browseConfirm">
+                确认当前目录为项目
+              </button>
             </div>
             <div id="browseList" class="browse-list"></div>
           </div>
           <label>
-            继续已有任务（可选）
+            <span data-i18n="submit.parentLabel">继续已有任务（可选）</span>
             <select id="parentJobSelect">
-              <option value="">新建会话</option>
+              <option value="" data-i18n="submit.newSession">新建会话</option>
             </select>
           </label>
           <label>
-            模式
+            <span data-i18n="submit.mode">模式</span>
             <select id="modeSelect">
-              <option value="agent">Agent（执行）</option>
-              <option value="plan">Plan（规划）</option>
+              <option value="agent" data-i18n="submit.modeAgent">Agent（执行）</option>
+              <option value="plan" data-i18n="submit.modePlan">Plan（规划）</option>
             </select>
           </label>
           <label>
-            指令
-            <textarea id="promptInput" rows="8" placeholder="例如：检查这个项目的登录页面问题并修复，完成后运行相关检查。"></textarea>
+            <span data-i18n="submit.prompt">指令</span>
+            <textarea
+              id="promptInput"
+              rows="8"
+              data-i18n-placeholder="submit.promptPlaceholder"
+              placeholder="例如：检查这个项目的登录页面问题并修复，完成后运行相关检查。"
+            ></textarea>
           </label>
-          <button id="submitJobButton">让 Cursor 修改</button>
-          <p class="hint">控制台不会提供任意 Shell，仅把任务提交给 Cursor Agent。</p>
+          <button id="submitJobButton" data-i18n="submit.button">让 Cursor 修改</button>
+          <p class="hint" data-i18n="submit.shellHint">控制台不会提供任意 Shell，仅把任务提交给 Cursor Agent。</p>
         </section>
 
         <section class="card current-job-card">
           <div class="row">
-            <h2>会话详情</h2>
-            <button id="stopJobButton" class="ghost danger hidden" type="button">停止</button>
+            <h2 data-i18n="session.title">会话详情</h2>
+            <button id="stopJobButton" class="ghost danger hidden" type="button" data-i18n="session.stop">停止</button>
           </div>
           <div id="currentJob" class="empty">暂无任务</div>
           <div id="chatOutput" class="chat"></div>
           <form id="followUpForm" class="follow-up-composer hidden">
             <label class="follow-up-mode">
-              模式
+              <span data-i18n="session.followUpMode">模式</span>
               <select id="followUpModeSelect">
-                <option value="agent">Agent（执行）</option>
-                <option value="plan">Plan（规划）</option>
+                <option value="agent" data-i18n="submit.modeAgent">Agent（执行）</option>
+                <option value="plan" data-i18n="submit.modePlan">Plan（规划）</option>
               </select>
             </label>
             <textarea
               id="followUpInput"
               rows="2"
+              data-i18n-placeholder="session.followUpPlaceholder"
               placeholder="继续安排这个任务…（Enter 发送，Shift+Enter 换行）"
             ></textarea>
             <div class="follow-up-actions">
-              <span id="followUpHint" class="hint">基于当前会话继续对话</span>
-              <button id="followUpButton" type="submit">发送</button>
+              <span id="followUpHint" class="hint" data-i18n="session.followUpHint">基于当前会话继续对话</span>
+              <button id="followUpButton" type="submit" data-i18n="session.followUpSend">发送</button>
             </div>
           </form>
         </section>
 
         <section class="card">
-          <h2>历史任务</h2>
+          <h2 data-i18n="history.title">历史任务</h2>
           <div id="jobList" class="job-list"></div>
         </section>
       </section>
 
       <div id="toast" class="toast hidden"></div>
     </main>
-    <script src="/app.js?v=0.2.6" type="module"></script>
+    <script src="/app.js?v=0.2.7" type="module"></script>
   </body>
 </html>

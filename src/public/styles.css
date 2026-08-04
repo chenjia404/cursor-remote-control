@@ -86,6 +86,37 @@ textarea {
   justify-content: flex-end;
 }
 
+.lang-switch {
+  align-items: stretch;
+  background: rgba(2, 6, 23, 0.55);
+  border: 1px solid #334155;
+  border-radius: 0.9rem;
+  display: inline-flex;
+  overflow: hidden;
+  padding: 0.15rem;
+}
+
+.lang-option {
+  background: transparent;
+  border: 0;
+  border-radius: 0.75rem;
+  color: #94a3b8;
+  font-size: 0.8rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  min-width: 2.2rem;
+  padding: 0.4rem 0.55rem;
+}
+
+.lang-option.active {
+  background: rgba(56, 189, 248, 0.18);
+  color: #e0f2fe;
+}
+
+.lang-option:not(.active):hover {
+  color: #e5e7eb;
+}
+
 .eyebrow {
   align-items: center;
   color: #7dd3fc;

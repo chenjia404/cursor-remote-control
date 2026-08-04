@@ -1,9 +1,10 @@
-const APP_VERSION = "0.2.6";
+const APP_VERSION = "0.2.7";
 const CACHE_NAME = `cursor-remote-control-v${APP_VERSION}`;
 const APP_SHELL = [
   "/",
   `/styles.css?v=${APP_VERSION}`,
   `/app.js?v=${APP_VERSION}`,
+  `/i18n.js?v=${APP_VERSION}`,
   "/vendor/marked.esm.js",
   "/vendor/purify.es.mjs",
   "/manifest.webmanifest",
@@ -56,6 +57,7 @@ self.addEventListener("fetch", (event) => {
   if (
     event.request.mode === "navigate" ||
     requestUrl.pathname === "/app.js" ||
+    requestUrl.pathname === "/i18n.js" ||
     requestUrl.pathname === "/styles.css" ||
     requestUrl.pathname === "/sw.js" ||
     requestUrl.pathname === "/version.js" ||
