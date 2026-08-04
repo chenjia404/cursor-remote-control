@@ -4,6 +4,8 @@
 
 推荐直接用本机 Node.js + pnpm 运行。Cursor SDK 本地模式需要访问本机项目、凭据和开发环境；Docker 容器里往往缺少这些组件，因此 Docker 仅作可选备用，日常请用宿主机启动。
 
+![Cursor 远程控制台界面](./screenshot.png)
+
 ## 功能
 
 - 管理员账号密码登录，默认用户名为 `admin`。
