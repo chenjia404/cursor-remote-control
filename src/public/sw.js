@@ -1,8 +1,9 @@
-const APP_VERSION = "0.2.7";
+const APP_VERSION = "0.2.12";
 const CACHE_NAME = `cursor-remote-control-v${APP_VERSION}`;
 const APP_SHELL = [
   "/",
   `/styles.css?v=${APP_VERSION}`,
+  `/boot.js?v=${APP_VERSION}`,
   `/app.js?v=${APP_VERSION}`,
   `/i18n.js?v=${APP_VERSION}`,
   "/vendor/marked.esm.js",
@@ -51,12 +52,12 @@ self.addEventListener("fetch", (event) => {
   const requestUrl = new URL(event.request.url);
 
   if (requestUrl.origin !== self.location.origin) return;
-  if (requestUrl.pathname.startsWith("/api/")) return;
+  if (requestUrl.pathname.startsWith("/api/") || event.request.method !== "GET") return;
 
-  // 页面与关键前端资源优先走网络，避免旧壳层挡住更新
   if (
     event.request.mode === "navigate" ||
     requestUrl.pathname === "/app.js" ||
+    requestUrl.pathname === "/boot.js" ||
     requestUrl.pathname === "/i18n.js" ||
     requestUrl.pathname === "/styles.css" ||
     requestUrl.pathname === "/sw.js" ||

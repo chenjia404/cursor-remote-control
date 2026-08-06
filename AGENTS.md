@@ -68,7 +68,7 @@ pnpm generate-icons
 - `PROJECT_ROOTS` 只应配置本机 Windows 项目根目录，例如 `E:\code;D:\code;C:\code`，不要配置整个系统盘，也不要使用 Docker 容器内路径。
 
 - 项目路径必须经过 `src/projects.ts` 的根目录校验后才能传给 Cursor SDK。
-- 公网访问时必须使用 HTTPS，并把 `COOKIE_SECURE=true`。
+- 公网访问时必须使用 HTTPS 反代；本服务仍只监听 HTTP。把 `COOKIE_SECURE=true`，并设置 `PUBLIC_BASE_URL=https://...`；反代需转发 `X-Forwarded-Proto`。
 - 新增接口如果会改变状态，必须经过登录和 CSRF 校验。
 - 任务日志、错误输出和审计信息中不要输出敏感环境变量。
 

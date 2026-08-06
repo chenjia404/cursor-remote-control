@@ -51,12 +51,14 @@ COOKIE_SECURE=false
 
 `PROJECT_ROOTS` 使用英文分号分隔多个目录，路径为本机 Windows 路径。建议只配置项目根目录，不要配置整个系统盘。
 
-如果通过 HTTPS 公网域名访问，请设置：
+本服务只监听 HTTP；若前面有 Nginx / Cloudflare 等 HTTPS 反代，请设置：
 
 ```env
 COOKIE_SECURE=true
-PUBLIC_BASE_URL=
+PUBLIC_BASE_URL=https://your.example.com
 ```
+
+并确保反代向本机转发 `X-Forwarded-Proto: https`（以及常用的 `X-Forwarded-For` / `Host`）。会话 Cookie 的 `Secure` 按「用户侧是否 HTTPS」判断，不是按 Node 监听协议。
 
 ## 启动（宿主机）
 

@@ -216,7 +216,8 @@ const apiErrorKeys = {
   项目路径不在允许的本地项目根目录内: "api.pathNotAllowed",
   项目路径不在允许范围内: "api.pathOutOfRange",
   项目路径不是目录: "api.pathNotDirectory",
-  目标目录缺少项目标记，拒绝执行: "api.missingMarkers",
+  // 含中文逗号，必须加引号，否则整个前端模块无法解析
+  "目标目录缺少项目标记，拒绝执行": "api.missingMarkers",
   无法读取该目录: "api.cannotReadDir",
   目标路径不是目录: "api.targetNotDirectory",
   "CURSOR_API_KEY 未配置": "api.missingApiKey",

@@ -33,9 +33,9 @@ const envSchema = z.object({
 
   DATA_DIR: z.string().default("./data"),
   COOKIE_SECURE: z
-    .string()
+    .enum(["true", "false"])
     .optional()
-    .transform((value) => value === "true"),
+    .transform((value): boolean | undefined => (value === undefined ? undefined : value === "true")),
   ENABLE_TOTP: z
     .string()
     .optional()
@@ -48,6 +48,24 @@ function resolveFromRoot(value: string): string {
   return path.isAbsolute(value) ? value : path.resolve(appRoot, value);
 }
 
+function publicBaseUrlIsHttps(publicBaseUrl: string): boolean {
+  try {
+    return Boolean(publicBaseUrl && new URL(publicBaseUrl).protocol === "https:");
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * 本服务通常只监听 HTTP，公网 HTTPS 由反代终止。
+ * Cookie Secure 应在「用户侧是 HTTPS」时开启，而不是看 Node 监听协议。
+ */
+function resolveCookieSecure(): boolean {
+  if (env.COOKIE_SECURE !== undefined) return env.COOKIE_SECURE;
+  if (publicBaseUrlIsHttps(env.PUBLIC_BASE_URL)) return true;
+  return env.NODE_ENV === "production";
+}
+
 export const config = {
   appRoot,
   appVersion: readAppVersion(),
@@ -55,6 +73,7 @@ export const config = {
   host: env.HOST,
   port: env.PORT,
   publicBaseUrl: env.PUBLIC_BASE_URL,
+  publicBaseUrlIsHttps: publicBaseUrlIsHttps(env.PUBLIC_BASE_URL),
   cursorApiKey: env.CURSOR_API_KEY,
   cursorModel: env.CURSOR_MODEL,
   cursorDefaultMode: env.CURSOR_DEFAULT_MODE,
@@ -66,7 +85,7 @@ export const config = {
     .filter(Boolean)
     .map(resolveFromRoot),
   dataDir: resolveFromRoot(env.DATA_DIR),
-  cookieSecure: env.COOKIE_SECURE ?? env.NODE_ENV === "production",
+  cookieSecure: resolveCookieSecure(),
   enableTotp: env.ENABLE_TOTP ?? false,
 };
 

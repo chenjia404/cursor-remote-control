@@ -66,6 +66,8 @@ async function start(): Promise<void> {
 
   await app.register(cookie);
   await app.register(helmet, {
+    // 避免与 Cloudflare 的 ACAO:* 叠加后干扰模块脚本加载
+    crossOriginResourcePolicy: { policy: "cross-origin" },
     contentSecurityPolicy: {
       directives: {
         defaultSrc: ["'self'"],
@@ -86,7 +88,23 @@ async function start(): Promise<void> {
       if (filePath.endsWith(".webmanifest")) {
         reply.header("Content-Type", "application/manifest+json; charset=utf-8");
       }
+      // 入口与启动脚本不要被中间层长期缓存，避免旧表单/旧 SW 残留
+      if (
+        filePath.endsWith(`${path.sep}index.html`) ||
+        filePath.endsWith(`${path.sep}boot.js`) ||
+        filePath.endsWith(`${path.sep}app.js`) ||
+        filePath.endsWith(`${path.sep}i18n.js`) ||
+        filePath.endsWith(`${path.sep}sw.js`) ||
+        filePath.endsWith(`${path.sep}version.js`)
+      ) {
+        reply.header("Cache-Control", "no-cache, no-store, must-revalidate");
+      }
     },
+  });
+
+  // 登录表单若被浏览器原生提交，不要返回 JSON 404 页
+  app.post("/", async (_request, reply) => {
+    reply.redirect("/");
   });
 
   app.get("/health", async () => ({
@@ -106,12 +124,16 @@ async function start(): Promise<void> {
       return;
     }
 
-    const csrfToken = await issueSession(reply, body.username);
-    return { username: body.username, csrfToken };
+    const issued = await issueSession(reply, body.username, request);
+    return {
+      username: body.username,
+      csrfToken: issued.csrfToken,
+      sessionToken: issued.sessionToken,
+    };
   });
 
   app.post("/api/logout", { preHandler: requireCsrf }, async (request, reply) => {
-    await clearSession(reply, request.sessionId);
+    await clearSession(reply, request.sessionId, request);
     return { ok: true };
   });
 
@@ -222,11 +244,26 @@ async function start(): Promise<void> {
       return;
     }
 
+    const fastifyError = error as { statusCode?: number; code?: string };
+    if (fastifyError.statusCode && fastifyError.statusCode >= 400 && fastifyError.statusCode < 500) {
+      reply.code(fastifyError.statusCode).send({ error: "请求参数错误" });
+      return;
+    }
+
     app.log.error(error);
     reply.code(500).send({ error: "服务器内部错误" });
   });
 
   await app.listen({ host: config.host, port: config.port });
+  app.log.info(
+    {
+      listen: `http://${config.host}:${config.port}`,
+      publicBaseUrl: config.publicBaseUrl || "",
+      cookieSecure: config.cookieSecure,
+      trustProxy: true,
+    },
+    "started (HTTP behind optional HTTPS reverse proxy; forward X-Forwarded-Proto)",
+  );
 }
 
 start().catch((error) => {

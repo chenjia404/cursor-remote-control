@@ -124,9 +124,48 @@ export function verifyPassword(password: string, storedHash: string): boolean {
 }
 
 /**
- * 签发新会话。同一时刻仅保留一个有效会话，新登录会使其他设备上的旧会话立即失效。
+ * 用户是否通过 HTTPS 访问（反代场景看转发头，而不是 Node 的监听协议）。
+ * 本服务常为 HTTP，前面 Cloudflare / Nginx 等以 HTTPS 对外。
  */
-export async function issueSession(reply: FastifyReply, username: string): Promise<string> {
+export function isHttpsClientRequest(request?: FastifyRequest): boolean {
+  if (!request) return config.cookieSecure || config.publicBaseUrlIsHttps;
+
+  // trustProxy: true 时，Fastify 会按 X-Forwarded-Proto 填充 protocol
+  if (request.protocol === "https") return true;
+
+  const forwarded = request.headers["x-forwarded-proto"];
+  if (typeof forwarded === "string" && forwarded.split(",")[0].trim().toLowerCase() === "https") {
+    return true;
+  }
+  if (Array.isArray(forwarded) && forwarded[0]?.split(",")[0].trim().toLowerCase() === "https") {
+    return true;
+  }
+
+  // Cloudflare 常见附加头
+  const cfVisitor = request.headers["cf-visitor"];
+  if (typeof cfVisitor === "string" && /"scheme"\s*:\s*"https"/i.test(cfVisitor)) {
+    return true;
+  }
+
+  // 配置声明公网是 HTTPS 时，即使某次请求缺转发头，也按 Secure Cookie 处理
+  return config.cookieSecure || config.publicBaseUrlIsHttps;
+}
+
+function cookieSecureForRequest(request?: FastifyRequest): boolean {
+  return isHttpsClientRequest(request);
+}
+
+export type IssuedSession = {
+  csrfToken: string;
+  /** 与 Cookie 同值；反代丢弃 Set-Cookie 时可由前端放到 Authorization */
+  sessionToken: string;
+};
+
+export async function issueSession(
+  reply: FastifyReply,
+  username: string,
+  request?: FastifyRequest,
+): Promise<IssuedSession> {
   const sessionId = crypto.randomBytes(32).toString("base64url");
   const expiresAt = Date.now() + SESSION_TTL_SECONDS * 1000;
   const csrfToken = crypto.randomBytes(24).toString("base64url");
@@ -150,15 +189,19 @@ export async function issueSession(reply: FastifyReply, username: string): Promi
   reply.setCookie(SESSION_COOKIE, cookieValue, {
     httpOnly: true,
     sameSite: "lax",
-    secure: config.cookieSecure,
+    secure: cookieSecureForRequest(request),
     path: "/",
     maxAge: SESSION_TTL_SECONDS,
   });
 
-  return csrfToken;
+  return { csrfToken, sessionToken: cookieValue };
 }
 
-export async function clearSession(reply: FastifyReply, sessionId?: string): Promise<void> {
+export async function clearSession(
+  reply: FastifyReply,
+  sessionId?: string,
+  request?: FastifyRequest,
+): Promise<void> {
   if (activeSession && (!sessionId || activeSession.sessionId === sessionId)) {
     activeSession = null;
     await persistActiveSession();
@@ -166,16 +209,27 @@ export async function clearSession(reply: FastifyReply, sessionId?: string): Pro
 
   reply.clearCookie(SESSION_COOKIE, {
     path: "/",
-    secure: config.cookieSecure,
+    secure: cookieSecureForRequest(request),
     sameSite: "lax",
   });
 }
 
-export function readSession(request: FastifyRequest): SessionPayload | null {
-  const rawCookie = request.cookies[SESSION_COOKIE];
-  if (!rawCookie) return null;
+function readBearerToken(request: FastifyRequest): string | null {
+  const auth = request.headers.authorization;
+  if (typeof auth === "string") {
+    const match = /^Bearer\s+(.+)$/i.exec(auth.trim());
+    if (match?.[1]?.trim()) return match[1].trim();
+  }
 
-  const [encoded, signature] = rawCookie.split(".");
+  // 部分反代会去掉 Authorization，额外支持自定义头
+  const alt = request.headers["x-crc-session"];
+  if (typeof alt === "string" && alt.trim()) return alt.trim();
+  if (Array.isArray(alt) && alt[0]?.trim()) return alt[0].trim();
+  return null;
+}
+
+function parseSessionToken(rawToken: string): SessionPayload | null {
+  const [encoded, signature] = rawToken.split(".");
   if (!encoded || !signature || sign(encoded) !== signature) return null;
 
   try {
@@ -189,6 +243,18 @@ export function readSession(request: FastifyRequest): SessionPayload | null {
   } catch {
     return null;
   }
+}
+
+export function readSession(request: FastifyRequest): SessionPayload | null {
+  const rawCookie = request.cookies[SESSION_COOKIE];
+  if (rawCookie) {
+    const fromCookie = parseSessionToken(rawCookie);
+    if (fromCookie) return fromCookie;
+  }
+
+  const bearer = readBearerToken(request);
+  if (bearer) return parseSessionToken(bearer);
+  return null;
 }
 
 export async function requireAuth(request: FastifyRequest, reply: FastifyReply): Promise<void> {

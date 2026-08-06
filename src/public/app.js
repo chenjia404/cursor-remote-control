@@ -1,5 +1,3 @@
-import { marked } from "./vendor/marked.esm.js";
-import DOMPurify from "./vendor/purify.es.mjs";
 import { APP_VERSION } from "./version.js";
 import {
   applyDomI18n,
@@ -9,19 +7,42 @@ import {
   setLocale,
   t,
   translateApiError,
-} from "./i18n.js";
+} from "./i18n.js?v=0.2.12";
 
-marked.setOptions({
-  gfm: true,
-  breaks: true,
-});
+let markedRef = null;
+let purifyRef = null;
+let markdownLoading = null;
 
-DOMPurify.addHook("afterSanitizeAttributes", (node) => {
-  if (node.tagName === "A" && node.hasAttribute("href")) {
-    node.setAttribute("target", "_blank");
-    node.setAttribute("rel", "noopener noreferrer");
+async function ensureMarkdownLibs() {
+  if (markedRef && purifyRef) return;
+  if (markdownLoading) {
+    await markdownLoading;
+    return;
   }
-});
+
+  markdownLoading = Promise.all([
+    import("./vendor/marked.esm.js"),
+    import("./vendor/purify.es.mjs"),
+  ]).then(([markedMod, purifyMod]) => {
+    markedRef = markedMod.marked;
+    purifyRef = purifyMod.default;
+    markedRef.setOptions({ gfm: true, breaks: true });
+    if (purifyRef && typeof purifyRef.addHook === "function") {
+      purifyRef.addHook("afterSanitizeAttributes", (node) => {
+        if (node.tagName === "A" && node.hasAttribute("href")) {
+          node.setAttribute("target", "_blank");
+          node.setAttribute("rel", "noopener noreferrer");
+        }
+      });
+    }
+  });
+
+  try {
+    await markdownLoading;
+  } finally {
+    markdownLoading = null;
+  }
+}
 
 const MODE_LABELS = {
   agent: "Agent",
@@ -58,6 +79,12 @@ if (versionEl) {
 }
 
 const $ = (selector) => document.querySelector(selector);
+
+function on(selector, eventName, handler, options) {
+  const element = $(selector);
+  if (!element) return;
+  element.addEventListener(eventName, handler, options);
+}
 
 function formatDateTime(value) {
   return new Date(value).toLocaleString(localeTag());
@@ -128,15 +155,32 @@ function showToast(message) {
   window.setTimeout(() => toast.classList.add("hidden"), 3200);
 }
 
+function getSessionToken() {
+  if (window.__crcSession?.sessionToken) return window.__crcSession.sessionToken;
+  try {
+    return sessionStorage.getItem("crc_session_token") || "";
+  } catch {
+    return "";
+  }
+}
+
 async function api(path, options = {}) {
+  const { headers: extraHeaders, ...rest } = options;
+  const sessionToken = getSessionToken();
   const response = await fetch(path, {
     credentials: "same-origin",
+    ...rest,
     headers: {
       "Content-Type": "application/json",
       ...(state.csrfToken ? { "x-csrf-token": state.csrfToken } : {}),
-      ...(options.headers || {}),
+      ...(sessionToken
+        ? {
+            Authorization: `Bearer ${sessionToken}`,
+            "x-crc-session": sessionToken,
+          }
+        : {}),
+      ...(extraHeaders || {}),
     },
-    ...options,
   });
 
   const data = await response.json().catch(() => ({}));
@@ -145,6 +189,20 @@ async function api(path, options = {}) {
   }
 
   return data;
+}
+
+/** 清除误用 GET 提交残留在地址栏的账号密码，避免泄露与干扰 */
+function stripCredentialsFromUrl() {
+  try {
+    const url = new URL(window.location.href);
+    if (!url.searchParams.has("username") && !url.searchParams.has("password")) return;
+    url.searchParams.delete("username");
+    url.searchParams.delete("password");
+    const clean = `${url.pathname}${url.search}${url.hash}`;
+    window.history.replaceState({}, "", clean || "/");
+  } catch {
+    // ignore
+  }
 }
 
 function setLoggedIn(loggedIn) {
@@ -290,8 +348,17 @@ function escapeHtml(value) {
 }
 
 function renderMarkdown(value) {
-  const html = marked.parse(String(value || ""), { async: false });
-  return DOMPurify.sanitize(html, {
+  if (!markedRef || !purifyRef) {
+    ensureMarkdownLibs()
+      .then(() => {
+        if (state.currentJob) renderCurrentJob(state.currentJob);
+      })
+      .catch(() => {});
+    return escapeHtml(String(value || "")).replaceAll("\n", "<br>");
+  }
+
+  const html = markedRef.parse(String(value || ""), { async: false });
+  return purifyRef.sanitize(html, {
     USE_PROFILES: { html: true },
     ADD_ATTR: ["target"],
   });
@@ -721,6 +788,13 @@ async function stopCurrentJob() {
 }
 
 async function bootstrap() {
+  if (window.__crcSession?.csrfToken) {
+    state.csrfToken = window.__crcSession.csrfToken;
+    setLoggedIn(true);
+    await refreshData();
+    return;
+  }
+
   try {
     const session = await api("/api/session");
     state.csrfToken = session.csrfToken;
@@ -731,9 +805,44 @@ async function bootstrap() {
   }
 }
 
-$("#loginForm").addEventListener("submit", async (event) => {
+/** 供 boot.js 在登录成功后调用 */
+export async function onBootAuthenticated(session) {
+  state.csrfToken = session?.csrfToken || "";
+  if (!session?.sessionToken) {
+    throw new Error("缺少会话令牌，无法加载项目与历史");
+  }
+
+  window.__crcSession = {
+    csrfToken: state.csrfToken,
+    sessionToken: session.sessionToken,
+    username: session.username || "admin",
+  };
+  try {
+    sessionStorage.setItem("crc_session_token", session.sessionToken);
+    sessionStorage.setItem("crc_csrf_token", state.csrfToken);
+  } catch {
+    // ignore
+  }
+
+  stripCredentialsFromUrl();
+  setLoggedIn(true);
+  await ensureMarkdownLibs().catch(() => {});
+  await refreshData();
+}
+
+window.__crcApp = {
+  onBootAuthenticated,
+  refreshData: () => refreshData(),
+};
+
+// 登录由 boot.js 负责；这里仅作模块单独打开时的备用
+on("#loginForm", "submit", async (event) => {
+  if (event.defaultPrevented) return;
   event.preventDefault();
+  event.stopPropagation();
   const form = new FormData(event.currentTarget);
+  const submitButton = event.currentTarget.querySelector('button[type="submit"]');
+  if (submitButton) submitButton.disabled = true;
 
   try {
     const data = await api("/api/login", {
@@ -743,40 +852,44 @@ $("#loginForm").addEventListener("submit", async (event) => {
         password: form.get("password"),
       }),
     });
-    state.csrfToken = data.csrfToken;
-    setLoggedIn(true);
-    await refreshData();
+    await onBootAuthenticated(data);
   } catch (error) {
     showToast(error.message);
+  } finally {
+    if (submitButton) submitButton.disabled = false;
   }
 });
 
-$("#logoutButton").addEventListener("click", async () => {
-  await api("/api/logout", { method: "POST", body: "{}" }).catch(() => {});
-  state.csrfToken = "";
-  setLoggedIn(false);
-});
+// logout 已由 boot.js 绑定；避免重复请求
+if (!$("#logoutButton")?.dataset.bootBound) {
+  on("#logoutButton", "click", async () => {
+    await api("/api/logout", { method: "POST", body: "{}" }).catch(() => {});
+    state.csrfToken = "";
+    window.__crcSession = null;
+    setLoggedIn(false);
+  });
+}
 
-$("#refreshButton").addEventListener("click", () => {
+on("#refreshButton", "click", () => {
   refreshData().catch((error) => showToast(error.message));
 });
 
-$("#stopJobButton").addEventListener("click", () => {
+on("#stopJobButton", "click", () => {
   stopCurrentJob().catch((error) => showToast(error.message));
 });
 
-$("#projectSearchInput").addEventListener("input", renderProjects);
+on("#projectSearchInput", "input", renderProjects);
 
-$("#browseOpenButton").addEventListener("click", async () => {
+on("#browseOpenButton", "click", async () => {
   setBrowsePanelOpen(true);
   await loadBrowse(null);
 });
 
-$("#browseCloseButton").addEventListener("click", () => {
+on("#browseCloseButton", "click", () => {
   setBrowsePanelOpen(false);
 });
 
-$("#browseUpButton").addEventListener("click", async () => {
+on("#browseUpButton", "click", async () => {
   if (state.browse.parentPath) {
     await loadBrowse(state.browse.parentPath);
     return;
@@ -785,17 +898,17 @@ $("#browseUpButton").addEventListener("click", async () => {
   await loadBrowse(null);
 });
 
-$("#browseSelectButton").addEventListener("click", async () => {
+on("#browseSelectButton", "click", async () => {
   await confirmBrowseSelection(state.browse.currentPath);
 });
 
-$("#browseList").addEventListener("click", async (event) => {
+on("#browseList", "click", async (event) => {
   const item = event.target.closest("[data-browse-path]");
   if (!item) return;
   await loadBrowse(item.dataset.browsePath);
 });
 
-$("#submitJobButton").addEventListener("click", async () => {
+on("#submitJobButton", "click", async () => {
   const prompt = $("#promptInput").value.trim();
   const projectId = $("#projectSelect").value;
   const parentJobId = $("#parentJobSelect").value || undefined;
@@ -830,16 +943,16 @@ $("#submitJobButton").addEventListener("click", async () => {
   }
 });
 
-$("#followUpForm").addEventListener("submit", async (event) => {
+on("#followUpForm", "submit", async (event) => {
   event.preventDefault();
-  const prompt = $("#followUpInput").value.trim();
+  const prompt = $("#followUpInput")?.value.trim();
   if (!prompt) {
     showToast(t("toast.enterFollowUp"));
     return;
   }
 
   const button = $("#followUpButton");
-  button.disabled = true;
+  if (button) button.disabled = true;
   try {
     await submitFollowUp(prompt, state.currentJobId);
   } catch (error) {
@@ -849,13 +962,13 @@ $("#followUpForm").addEventListener("submit", async (event) => {
   }
 });
 
-$("#followUpInput").addEventListener("keydown", (event) => {
+on("#followUpInput", "keydown", (event) => {
   if (event.key !== "Enter" || event.shiftKey) return;
   event.preventDefault();
-  $("#followUpForm").requestSubmit();
+  $("#followUpForm")?.requestSubmit();
 });
 
-$("#followUpInput").addEventListener("input", (event) => {
+on("#followUpInput", "input", (event) => {
   const input = event.currentTarget;
   autosizeTextarea(input);
   if (state.currentJobId) {
@@ -867,15 +980,15 @@ $("#followUpInput").addEventListener("input", (event) => {
   }
 });
 
-$("#modeSelect").addEventListener("change", (event) => {
+on("#modeSelect", "change", (event) => {
   saveMode(getModeFromSelect(event.currentTarget));
 });
 
-$("#followUpModeSelect").addEventListener("change", (event) => {
+on("#followUpModeSelect", "change", (event) => {
   saveMode(getModeFromSelect(event.currentTarget));
 });
 
-$("#jobList").addEventListener("click", async (event) => {
+on("#jobList", "click", async (event) => {
   const item = event.target.closest(".job-item");
   if (!item) return;
 
@@ -945,7 +1058,7 @@ window.addEventListener("appinstalled", () => {
   showToast(t("toast.installed"));
 });
 
-$("#installButton").addEventListener("click", async () => {
+on("#installButton", "click", async () => {
   if (!state.installPromptEvent) {
     showManualInstallHint();
     return;
@@ -957,14 +1070,33 @@ $("#installButton").addEventListener("click", async () => {
   updateInstallButtonVisibility();
 });
 
+async function registerServiceWorker() {
+  if (!("serviceWorker" in navigator)) return;
+
+  // 注销掉带 ?v= 的旧注册，避免旧 SW 长期控制页面导致登录脚本失效
+  const registrations = await navigator.serviceWorker.getRegistrations();
+  await Promise.all(
+    registrations.map(async (registration) => {
+      const scriptURL =
+        registration.active?.scriptURL ||
+        registration.waiting?.scriptURL ||
+        registration.installing?.scriptURL ||
+        "";
+      if (scriptURL.includes("sw.js?")) {
+        await registration.unregister();
+      }
+    }),
+  );
+
+  await navigator.serviceWorker.register("/sw.js");
+  updateInstallButtonVisibility();
+}
+
 if ("serviceWorker" in navigator) {
   window.addEventListener("load", () => {
-    navigator.serviceWorker
-      .register(`/sw.js?v=${APP_VERSION}`)
-      .then(() => updateInstallButtonVisibility())
-      .catch((error) => {
-        console.warn("Service Worker 注册失败", error);
-      });
+    registerServiceWorker().catch((error) => {
+      console.warn("Service Worker 注册失败", error);
+    });
   });
 }
 
@@ -976,8 +1108,22 @@ $("#langSwitch")?.addEventListener("click", (event) => {
   applyLocale(next);
 });
 
+stripCredentialsFromUrl();
 applyDomI18n();
 updateLangSwitch();
 updateInstallButtonVisibility();
 setModeSelect($("#modeSelect"), loadSavedMode());
-bootstrap();
+ensureMarkdownLibs().catch((error) => {
+  console.warn("Markdown 组件加载失败", error);
+});
+
+// 有 boot.js 时由 boot 在登录后调用 onBootAuthenticated，避免抢跑导致未带令牌请求
+if (!window.__crcBootManaged) {
+  bootstrap().catch((error) => {
+    console.error("初始化失败", error);
+    if (!window.__crcSession?.csrfToken) {
+      setLoggedIn(false);
+      showToast(error instanceof Error ? error.message : t("toast.requestFailed"));
+    }
+  });
+}
