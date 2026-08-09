@@ -75,6 +75,28 @@ pnpm build
 pnpm start
 ```
 
+### 开机自启
+
+登录后延迟启动（默认 60 秒），关闭 Cursor 后服务仍可运行：
+
+```powershell
+pnpm build
+pnpm autostart:install
+```
+
+自定义延迟：
+
+```powershell
+pwsh -File scripts/install-autostart.ps1 -DelaySeconds 120
+```
+
+立即后台启动 / 取消自启：
+
+```powershell
+pnpm autostart:start
+pnpm autostart:uninstall
+```
+
 访问：
 
 ```text

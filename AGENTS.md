@@ -102,6 +102,30 @@ D:\code\cursor-remote-control\data\server.log
 Invoke-RestMethod -Uri "http://127.0.0.1:20267/health" | ConvertTo-Json -Compress
 ```
 
+## 开机自启（Windows）
+
+登录后延迟启动（默认 60 秒），不依赖 Cursor IDE：
+
+```powershell
+pnpm autostart:install
+# 或自定义延迟秒数：
+pwsh -File scripts/install-autostart.ps1 -DelaySeconds 120
+```
+
+立即后台启动一次：
+
+```powershell
+pnpm autostart:start
+```
+
+取消自启：
+
+```powershell
+pnpm autostart:uninstall
+```
+
+计划任务名：`CursorRemoteControl`。日志仍写入 `data/server.log`。
+
 ## Cursor SDK 注意事项
 
 - 当前使用本地模式执行 Agent，`cwd` 必须是经过校验的项目目录。

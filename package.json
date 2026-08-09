@@ -9,7 +9,10 @@
     "build": "tsc",
     "typecheck": "tsc --noEmit",
     "init-admin": "tsx scripts/init-admin.ts",
-    "generate-icons": "tsx scripts/generate-icons.ts"
+    "generate-icons": "tsx scripts/generate-icons.ts",
+    "autostart:install": "pwsh -NoProfile -File scripts/install-autostart.ps1",
+    "autostart:uninstall": "pwsh -NoProfile -File scripts/uninstall-autostart.ps1",
+    "autostart:start": "pwsh -NoProfile -File scripts/start-server.ps1"
   },
   "dependencies": {
     "@cursor/sdk": "latest",
