@@ -12,13 +12,13 @@
     <link rel="icon" href="/icons/icon-192.png" type="image/png" sizes="192x192" />
     <link rel="icon" href="/icons/icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" sizes="180x180" />
-    <link rel="stylesheet" href="/styles.css?v=0.2.21" />
+    <link rel="stylesheet" href="/styles.css?v=0.2.22" />
   </head>
   <body>
     <main class="shell">
       <section id="loginView" class="card login-card">
         <div class="login-brand">
-          <p class="eyebrow">Cursor Remote Control <span id="loginAppVersion" class="version">v0.2.21</span></p>
+          <p class="eyebrow">Cursor Remote Control <span id="loginAppVersion" class="version">v0.2.22</span></p>
           <h1 data-i18n="header.title">远程控制台</h1>
         </div>
         <h2 data-i18n="login.title">登录</h2>
@@ -59,44 +59,94 @@
           </div>
         </header>
 
-        <div class="tab-panels" id="tabPanels">
-          <section id="tabSession" class="tab-panel active" data-tab="session">
-            <div id="sessionEmpty" class="session-empty">
-              <p data-i18n="session.emptyGuide">选择历史任务，或新建任务开始对话。</p>
-              <button id="sessionNewTaskButton" type="button" data-i18n="task.new">新建任务</button>
+        <div class="app-body">
+          <aside id="historyAside" class="history-aside" data-tab="history">
+            <div class="pull-refresh-zone" id="historyPullZone">
+              <div class="pull-refresh-indicator" id="historyPullIndicator" aria-hidden="true">
+                <span class="pull-refresh-text" data-i18n="pull.pull">下拉刷新</span>
+              </div>
+              <div class="history-panel stack">
+                <div class="filter-chips" id="historyFilters" role="tablist" data-i18n-aria="history.filterLabel">
+                  <button type="button" class="filter-chip active" data-filter="all" data-i18n="history.filterAll">全部</button>
+                  <button type="button" class="filter-chip" data-filter="active" data-i18n="history.filterActive">进行中</button>
+                  <button type="button" class="filter-chip" data-filter="finished" data-i18n="history.filterFinished">已完成</button>
+                  <button type="button" class="filter-chip" data-filter="failed" data-i18n="history.filterFailed">失败</button>
+                </div>
+                <label>
+                  <span data-i18n="history.searchLabel">搜索任务</span>
+                  <input
+                    id="historySearchInput"
+                    type="search"
+                    data-i18n-placeholder="history.searchPlaceholder"
+                    placeholder="按项目名或摘要过滤"
+                    autocomplete="off"
+                  />
+                </label>
+                <label class="inline-toggle">
+                  <input id="showArchivedToggle" type="checkbox" />
+                  <span data-i18n="history.showArchived">显示已归档</span>
+                </label>
+                <div id="jobList" class="job-list"></div>
+              </div>
             </div>
-            <div id="currentJob" class="session-summary hidden"></div>
-            <div id="chatOutput" class="chat hidden"></div>
-            <button id="newMessagesFab" class="new-messages-fab hidden" type="button" data-i18n="session.newMessages">
-              ↓ 新消息
-            </button>
-          </section>
+          </aside>
 
-          <section id="tabHistory" class="tab-panel hidden" data-tab="history" hidden>
-            <div id="jobList" class="job-list"></div>
-          </section>
+          <div class="main-panel">
+            <section id="tabSession" class="tab-panel active" data-tab="session">
+              <div class="pull-refresh-zone session-pull-zone" id="sessionPullZone">
+                <div class="pull-refresh-indicator" id="sessionPullIndicator" aria-hidden="true">
+                  <span class="pull-refresh-text" data-i18n="pull.pull">下拉刷新</span>
+                </div>
+                <div id="onboardingGuide" class="onboarding hidden">
+                  <p class="onboarding-title" data-i18n="onboarding.title">快速开始</p>
+                  <ol class="onboarding-steps">
+                    <li data-i18n="onboarding.step1">在「项目」页确认本地项目</li>
+                    <li data-i18n="onboarding.step2">点「新建任务」输入指令</li>
+                    <li data-i18n="onboarding.step3">在会话里继续对话与跟进</li>
+                  </ol>
+                  <button id="dismissOnboardingButton" type="button" class="ghost small" data-i18n="onboarding.dismiss">
+                    知道了
+                  </button>
+                </div>
+                <div id="sessionEmpty" class="session-empty">
+                  <p data-i18n="session.emptyGuide">选择历史任务，或新建任务开始对话。</p>
+                  <button id="sessionNewTaskButton" type="button" data-i18n="task.new">新建任务</button>
+                </div>
+                <div id="currentJob" class="session-summary hidden"></div>
+                <div id="chatOutput" class="chat hidden"></div>
+                <button id="newMessagesFab" class="new-messages-fab hidden" type="button" data-i18n="session.newMessages">
+                  ↓ 新消息
+                </button>
+              </div>
+            </section>
 
-          <section id="tabProjects" class="tab-panel hidden" data-tab="projects" hidden>
-            <div class="projects-panel stack">
-              <label>
-                <span data-i18n="submit.searchLabel">搜索项目</span>
-                <input
-                  id="projectSearchInput"
-                  type="search"
-                  data-i18n-placeholder="submit.searchPlaceholder"
-                  placeholder="输入项目名或路径过滤"
-                  autocomplete="off"
-                />
-              </label>
-              <div id="projectList" class="project-list"></div>
-              <button id="browseOpenButton" class="ghost browse-open-btn" type="button" data-i18n="submit.browseOpen">
-                浏览目录
-              </button>
-              <p id="projectSelectHint" class="hint" data-i18n="submit.projectHint">
-                列表显示已确认过的项目。新项目请点「浏览目录」添加。
-              </p>
-            </div>
-          </section>
+            <section id="tabProjects" class="tab-panel hidden" data-tab="projects" hidden>
+              <div class="pull-refresh-zone" id="projectsPullZone">
+                <div class="pull-refresh-indicator" id="projectsPullIndicator" aria-hidden="true">
+                  <span class="pull-refresh-text" data-i18n="pull.pull">下拉刷新</span>
+                </div>
+                <div class="projects-panel stack">
+                  <label>
+                    <span data-i18n="submit.searchLabel">搜索项目</span>
+                    <input
+                      id="projectSearchInput"
+                      type="search"
+                      data-i18n-placeholder="submit.searchPlaceholder"
+                      placeholder="输入项目名或路径过滤"
+                      autocomplete="off"
+                    />
+                  </label>
+                  <div id="projectList" class="project-list"></div>
+                  <button id="browseOpenButton" class="ghost browse-open-btn" type="button" data-i18n="submit.browseOpen">
+                    浏览目录
+                  </button>
+                  <p id="projectSelectHint" class="hint" data-i18n="submit.projectHint">
+                    列表显示已确认过的项目。新项目请点「浏览目录」添加。
+                  </p>
+                </div>
+              </div>
+            </section>
+          </div>
         </div>
 
         <div id="followUpDock" class="follow-up-dock hidden">
@@ -114,7 +164,10 @@
                 <select id="followUpModelSelect"></select>
               </label>
             </div>
-            <div id="followUpModelParams" class="model-params compact"></div>
+            <details class="model-advanced" id="followUpModelAdvanced">
+              <summary data-i18n="submit.modelAdvanced">高级模型选项</summary>
+              <div id="followUpModelParams" class="model-params compact"></div>
+            </details>
             <textarea
               id="followUpInput"
               rows="2"
@@ -184,8 +237,11 @@
                 <span data-i18n="submit.model">模型</span>
                 <select id="modelSelect"></select>
               </label>
-              <div id="modelParams" class="model-params"></div>
-              <p class="hint" data-i18n="submit.modelHint">思考强度、速度等选项会随所选模型变化。</p>
+              <details class="model-advanced" id="newTaskModelAdvanced">
+                <summary data-i18n="submit.modelAdvanced">高级模型选项</summary>
+                <div id="modelParams" class="model-params"></div>
+                <p class="hint" data-i18n="submit.modelHint">思考强度、速度等选项会随所选模型变化。</p>
+              </details>
             </div>
             <label>
               <span data-i18n="submit.prompt">指令</span>
@@ -217,11 +273,15 @@
                 <button type="button" class="lang-option" data-lang="en">EN</button>
               </div>
             </div>
+            <label class="inline-toggle settings-toggle">
+              <input id="notifyToggle" type="checkbox" />
+              <span data-i18n="settings.notify">任务完成时发送系统通知</span>
+            </label>
             <button id="installButton" class="ghost hidden" type="button" data-i18n="header.install">安装到主屏幕</button>
             <button id="logoutButton" class="ghost danger" type="button" data-i18n="header.logout">退出登录</button>
             <p class="hint settings-version">
               <span data-i18n="settings.version">版本</span>
-              <span id="appVersion" class="version">v0.2.21</span>
+              <span id="appVersion" class="version">v0.2.22</span>
             </p>
           </div>
         </div>
@@ -248,6 +308,6 @@
 
       <div id="toast" class="toast hidden"></div>
     </main>
-    <script src="/boot.js?v=0.2.21"></script>
+    <script src="/boot.js?v=0.2.22"></script>
   </body>
 </html>

@@ -28,6 +28,11 @@ const messages = {
 
     "settings.title": "设置",
     "settings.version": "版本",
+    "settings.notify": "任务完成时发送系统通知",
+
+    "notify.taskDone": "{name} 任务已完成",
+    "notify.taskFailed": "{name} 任务失败",
+    "notify.permissionDenied": "未获得通知权限",
 
     "submit.title": "提交任务",
     "submit.refresh": "刷新",
@@ -80,6 +85,29 @@ const messages = {
 
     "history.title": "历史任务",
     "history.empty": "暂无历史任务",
+    "history.noMatch": "没有匹配的任务",
+    "history.filterLabel": "筛选任务",
+    "history.filterAll": "全部",
+    "history.filterActive": "进行中",
+    "history.filterFinished": "已完成",
+    "history.filterFailed": "失败",
+    "history.searchLabel": "搜索任务",
+    "history.searchPlaceholder": "按项目名或摘要过滤",
+    "history.showArchived": "显示已归档",
+    "history.archive": "归档",
+    "history.unarchive": "取消归档",
+    "history.archived": "已归档",
+
+    "pull.pull": "下拉刷新",
+    "pull.release": "松开刷新",
+
+    "onboarding.title": "快速开始",
+    "onboarding.step1": "在「项目」页确认本地项目",
+    "onboarding.step2": "点「新建任务」输入指令",
+    "onboarding.step3": "在会话里继续对话与跟进",
+    "onboarding.dismiss": "知道了",
+
+    "submit.modelAdvanced": "高级模型选项",
 
     "panel.expand": "展开",
     "panel.collapse": "折叠",
@@ -171,6 +199,11 @@ const messages = {
 
     "settings.title": "Settings",
     "settings.version": "Version",
+    "settings.notify": "Notify when a task finishes",
+
+    "notify.taskDone": "{name} task finished",
+    "notify.taskFailed": "{name} task failed",
+    "notify.permissionDenied": "Notification permission denied",
 
     "submit.title": "Submit task",
     "submit.refresh": "Refresh",
@@ -223,6 +256,29 @@ const messages = {
 
     "history.title": "History",
     "history.empty": "No past tasks",
+    "history.noMatch": "No matching tasks",
+    "history.filterLabel": "Filter tasks",
+    "history.filterAll": "All",
+    "history.filterActive": "Active",
+    "history.filterFinished": "Finished",
+    "history.filterFailed": "Failed",
+    "history.searchLabel": "Search tasks",
+    "history.searchPlaceholder": "Filter by project or summary",
+    "history.showArchived": "Show archived",
+    "history.archive": "Archive",
+    "history.unarchive": "Unarchive",
+    "history.archived": "Archived",
+
+    "pull.pull": "Pull to refresh",
+    "pull.release": "Release to refresh",
+
+    "onboarding.title": "Quick start",
+    "onboarding.step1": "Confirm a local project on the Projects tab",
+    "onboarding.step2": "Tap New task and enter a prompt",
+    "onboarding.step3": "Continue the conversation in Session",
+    "onboarding.dismiss": "Got it",
+
+    "submit.modelAdvanced": "Advanced model options",
 
     "panel.expand": "Expand",
     "panel.collapse": "Collapse",

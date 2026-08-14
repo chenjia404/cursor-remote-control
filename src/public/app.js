@@ -7,7 +7,7 @@ import {
   setLocale,
   t,
   translateApiError,
-} from "./i18n.js?v=0.2.21";
+} from "./i18n.js?v=0.2.22";
 
 let markedRef = null;
 let purifyRef = null;
@@ -86,6 +86,10 @@ const MODE_STORAGE_KEY = "cursor-rc-mode";
 const MODEL_STORAGE_KEY = "cursor-rc-model";
 const PROJECT_STORAGE_KEY = "cursor-rc-project";
 const TAB_STORAGE_KEY = "cursor-rc-tab";
+const HISTORY_FILTER_KEY = "cursor-rc-history-filter";
+const ARCHIVED_JOBS_KEY = "cursor-rc-archived-jobs";
+const NOTIFY_STORAGE_KEY = "cursor-rc-notify";
+const ONBOARDING_STORAGE_KEY = "cursor-rc-onboarded";
 
 const state = {
   csrfToken: "",
@@ -95,6 +99,12 @@ const state = {
   currentJobId: "",
   currentJob: null,
   activeTab: "session",
+  historyFilter: "all",
+  historySearch: "",
+  showArchived: false,
+  archivedJobIds: new Set(),
+  notifyEnabled: false,
+  lastNotifiedStatus: new Map(),
   pollingTimer: null,
   installPromptEvent: null,
   followUpDrafts: new Map(),
@@ -150,6 +160,8 @@ function applyLocale(locale) {
   renderModelSettings("submit");
   renderModelSettings("followUp");
   syncModeSegmentFromSelect();
+  updateFilterChips();
+  updateOnboardingVisibility();
 }
 
 function loadSavedMode() {
@@ -188,6 +200,95 @@ function saveTab(tab) {
   }
 }
 
+function loadHistoryFilter() {
+  try {
+    const saved = localStorage.getItem(HISTORY_FILTER_KEY);
+    if (saved === "all" || saved === "active" || saved === "finished" || saved === "failed") return saved;
+  } catch {
+    // localStorage 不可用时忽略
+  }
+  return "all";
+}
+
+function saveHistoryFilter(filter) {
+  try {
+    localStorage.setItem(HISTORY_FILTER_KEY, filter);
+  } catch {
+    // localStorage 不可用时忽略
+  }
+}
+
+function loadArchivedJobIds() {
+  try {
+    const raw = localStorage.getItem(ARCHIVED_JOBS_KEY);
+    const list = raw ? JSON.parse(raw) : [];
+    return new Set(Array.isArray(list) ? list : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveArchivedJobIds() {
+  try {
+    localStorage.setItem(ARCHIVED_JOBS_KEY, JSON.stringify([...state.archivedJobIds]));
+  } catch {
+    // localStorage 不可用时忽略
+  }
+}
+
+function loadNotifyEnabled() {
+  try {
+    return localStorage.getItem(NOTIFY_STORAGE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function saveNotifyEnabled(enabled) {
+  state.notifyEnabled = Boolean(enabled);
+  try {
+    localStorage.setItem(NOTIFY_STORAGE_KEY, state.notifyEnabled ? "1" : "0");
+  } catch {
+    // localStorage 不可用时忽略
+  }
+}
+
+function isOnboardingDone() {
+  try {
+    return localStorage.getItem(ONBOARDING_STORAGE_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function markOnboardingDone() {
+  try {
+    localStorage.setItem(ONBOARDING_STORAGE_KEY, "1");
+  } catch {
+    // localStorage 不可用时忽略
+  }
+}
+
+function isWideLayout() {
+  return window.matchMedia("(min-width: 900px)").matches;
+}
+
+function updateWideLayout() {
+  const app = $("#appView");
+  if (!app) return;
+  app.classList.toggle("is-wide", isWideLayout());
+  if (isWideLayout() && state.activeTab === "history") {
+    switchTab("session");
+  }
+  updateLayoutState();
+}
+
+function updateLayoutState() {
+  const app = $("#appView");
+  if (!app) return;
+  app.dataset.activeTab = state.activeTab;
+}
+
 function loadSavedProjectId() {
   try {
     return localStorage.getItem(PROJECT_STORAGE_KEY) || "";
@@ -207,11 +308,15 @@ function saveSelectedProjectId(projectId) {
 }
 
 function switchTab(tabId) {
-  const tab = tabId === "history" || tabId === "projects" ? tabId : "session";
+  let tab = tabId === "history" || tabId === "projects" ? tabId : "session";
+  if (isWideLayout() && tab === "history") {
+    tab = "session";
+  }
   state.activeTab = tab;
   saveTab(tab);
+  updateLayoutState();
 
-  document.querySelectorAll(".tab-panel").forEach((panel) => {
+  document.querySelectorAll(".main-panel .tab-panel").forEach((panel) => {
     const active = panel.dataset.tab === tab;
     panel.classList.toggle("active", active);
     panel.hidden = !active;
@@ -225,6 +330,7 @@ function switchTab(tabId) {
 
   updateContextHeader();
   updateComposerDock();
+  updateOnboardingVisibility();
 }
 
 function openSheet(sheetId) {
@@ -799,6 +905,159 @@ function updateComposerDock() {
   }
 }
 
+function updateFilterChips() {
+  document.querySelectorAll("#historyFilters .filter-chip").forEach((button) => {
+    button.classList.toggle("active", button.dataset.filter === state.historyFilter);
+  });
+}
+
+function jobMatchesFilter(job) {
+  const archived = state.archivedJobIds.has(job.id);
+  if (!state.showArchived && archived) {
+    return false;
+  }
+
+  const keyword = state.historySearch.trim().toLowerCase();
+  if (keyword && !`${job.project.name} ${job.promptSummary}`.toLowerCase().includes(keyword)) {
+    return false;
+  }
+
+  switch (state.historyFilter) {
+    case "active":
+      return ["queued", "running"].includes(job.status);
+    case "finished":
+      return job.status === "finished";
+    case "failed":
+      return ["error", "cancelled"].includes(job.status);
+    default:
+      return true;
+  }
+}
+
+function toggleArchiveJob(jobId) {
+  if (state.archivedJobIds.has(jobId)) {
+    state.archivedJobIds.delete(jobId);
+  } else {
+    state.archivedJobIds.add(jobId);
+  }
+  saveArchivedJobIds();
+  renderJobs();
+}
+
+function updateOnboardingVisibility() {
+  const guide = $("#onboardingGuide");
+  if (!guide) return;
+  const show =
+    state.activeTab === "session" &&
+    !state.currentJob &&
+    !isOnboardingDone() &&
+    state.projects.length === 0 &&
+    state.jobs.length === 0;
+  guide.classList.toggle("hidden", !show);
+}
+
+async function requestNotificationPermission() {
+  if (!("Notification" in window)) return false;
+  if (Notification.permission === "granted") return true;
+  if (Notification.permission === "denied") return false;
+  const result = await Notification.requestPermission();
+  return result === "granted";
+}
+
+function maybeNotifyJobStatus(job) {
+  if (!state.notifyEnabled || !job || !document.hidden) return;
+  if (!("Notification" in window) || Notification.permission !== "granted") return;
+
+  const previous = state.lastNotifiedStatus.get(job.id);
+  if (previous === job.status) return;
+  if (!["finished", "error", "cancelled"].includes(job.status)) return;
+
+  state.lastNotifiedStatus.set(job.id, job.status);
+  const title =
+    job.status === "finished"
+      ? t("notify.taskDone", { name: job.project?.name || "" })
+      : t("notify.taskFailed", { name: job.project?.name || "" });
+
+  try {
+    new Notification(title, {
+      body: job.promptSummary,
+      tag: `crc-job-${job.id}`,
+    });
+  } catch {
+    // 部分浏览器在后台可能拒绝通知
+  }
+}
+
+function bindPullToRefresh(zone, indicator, onRefresh) {
+  if (!zone || !indicator || zone.dataset.ptrBound === "1") return;
+  zone.dataset.ptrBound = "1";
+
+  let startY = 0;
+  let pulling = false;
+  let distance = 0;
+  const threshold = 68;
+
+  const reset = () => {
+    pulling = false;
+    distance = 0;
+    zone.classList.remove("is-pulling", "is-refreshing");
+    indicator.querySelector(".pull-refresh-text").textContent = t("pull.pull");
+  };
+
+  zone.addEventListener(
+    "touchstart",
+    (event) => {
+      if (zone.scrollTop > 0) return;
+      startY = event.touches[0].clientY;
+      pulling = true;
+    },
+    { passive: true },
+  );
+
+  zone.addEventListener(
+    "touchmove",
+    (event) => {
+      if (!pulling || zone.scrollTop > 0) return;
+      distance = Math.max(0, event.touches[0].clientY - startY);
+      if (distance <= 0) return;
+      zone.classList.add("is-pulling");
+      indicator.querySelector(".pull-refresh-text").textContent =
+        distance >= threshold ? t("pull.release") : t("pull.pull");
+    },
+    { passive: true },
+  );
+
+  zone.addEventListener("touchend", async () => {
+    if (!pulling) return;
+    if (distance < threshold) {
+      reset();
+      return;
+    }
+
+    zone.classList.remove("is-pulling");
+    zone.classList.add("is-refreshing");
+    try {
+      await onRefresh();
+    } catch (error) {
+      showToast(error.message);
+    } finally {
+      reset();
+    }
+  });
+}
+
+function setupPullToRefresh() {
+  bindPullToRefresh($("#historyPullZone"), $("#historyPullIndicator"), () => refreshData());
+  bindPullToRefresh($("#projectsPullZone"), $("#projectsPullIndicator"), () => refreshData());
+  bindPullToRefresh($("#sessionPullZone"), $("#sessionPullIndicator"), async () => {
+    if (state.currentJobId) {
+      await refreshCurrentJob();
+      return;
+    }
+    await refreshData();
+  });
+}
+
 function updateContextHeader(job = state.currentJob) {
   const eyebrow = $("#contextEyebrow");
   const title = $("#contextTitle");
@@ -834,21 +1093,34 @@ function updateContextHeader(job = state.currentJob) {
 function renderJobs() {
   const list = $("#jobList");
   rememberFollowUpDraft();
+  updateFilterChips();
 
+  const jobs = state.jobs.filter(jobMatchesFilter);
   if (state.jobs.length === 0) {
     list.innerHTML = `<p class="empty">${escapeHtml(t("history.empty"))}</p>`;
     return;
   }
 
-  list.innerHTML = state.jobs
+  if (jobs.length === 0) {
+    list.innerHTML = `<p class="empty">${escapeHtml(t("history.noMatch"))}</p>`;
+    return;
+  }
+
+  list.innerHTML = jobs
     .map((job) => {
       const activeClass = job.id === state.currentJobId ? " active" : "";
+      const archived = state.archivedJobIds.has(job.id);
+      const archiveLabel = archived ? t("history.unarchive") : t("history.archive");
+      const archivedBadge = archived ? `<span class="mode-badge">${escapeHtml(t("history.archived"))}</span>` : "";
       return `
         <article class="job-item${activeClass}" data-job-id="${job.id}">
           <div class="job-item-summary">
-            <strong>${escapeHtml(job.project.name)}<span class="status status-${job.status}">${statusText(job.status)}</span>${modeBadge(job.mode)}${formatModelBadge(job.model)}</strong>
+            <strong>${escapeHtml(job.project.name)}${archivedBadge}<span class="status status-${job.status}">${statusText(job.status)}</span>${modeBadge(job.mode)}${formatModelBadge(job.model)}</strong>
             <div>${escapeHtml(job.promptSummary)}</div>
             <div class="meta">${escapeHtml(formatDateTime(job.createdAt))}</div>
+          </div>
+          <div class="job-item-actions">
+            <button type="button" class="ghost job-archive-btn" data-job-id="${escapeHtml(job.id)}">${escapeHtml(archiveLabel)}</button>
           </div>
         </article>
       `;
@@ -1129,6 +1401,7 @@ function renderCurrentJob(job) {
     updateFollowUpComposer(null);
     updateStopButton(null);
     updateContextHeader(null);
+    updateOnboardingVisibility();
     return;
   }
 
@@ -1147,6 +1420,7 @@ function renderCurrentJob(job) {
   updateFollowUpComposer(job);
   updateStopButton(job);
   updateContextHeader(job);
+  updateOnboardingVisibility();
 }
 
 let currentJobPollInFlight = false;
@@ -1220,6 +1494,7 @@ async function refreshCurrentJob() {
   upsertJob(job);
   renderJobs();
   renderCurrentJob(job);
+  maybeNotifyJobStatus(job);
 
   if (conversationIsBusy(job)) {
     startPollingCurrentJob();
@@ -1344,9 +1619,19 @@ export async function onBootAuthenticated(session) {
   stripCredentialsFromUrl();
   setLoggedIn(true);
   state.selectedProjectId = loadSavedProjectId();
+  state.historyFilter = loadHistoryFilter();
+  state.archivedJobIds = loadArchivedJobIds();
+  state.notifyEnabled = loadNotifyEnabled();
+  const notifyToggle = $("#notifyToggle");
+  if (notifyToggle) notifyToggle.checked = state.notifyEnabled;
+  const archivedToggle = $("#showArchivedToggle");
+  if (archivedToggle) archivedToggle.checked = state.showArchived;
+  updateWideLayout();
   switchTab(loadSavedTab());
+  setupPullToRefresh();
   await ensureMarkdownLibs().catch(() => {});
   await refreshData();
+  updateOnboardingVisibility();
 }
 
 window.__crcApp = {
@@ -1531,6 +1816,13 @@ document.querySelector(".mode-segment")?.addEventListener("click", (event) => {
 });
 
 on("#jobList", "click", async (event) => {
+  const archiveButton = event.target.closest(".job-archive-btn");
+  if (archiveButton) {
+    event.stopPropagation();
+    toggleArchiveJob(archiveButton.dataset.jobId);
+    return;
+  }
+
   const item = event.target.closest(".job-item");
   if (!item) return;
 
@@ -1542,6 +1834,43 @@ on("#jobList", "click", async (event) => {
   if (chatOutput) delete chatOutput.dataset.ready;
   await refreshCurrentJob();
   renderJobs();
+});
+
+on("#historyFilters", "click", (event) => {
+  const chip = event.target.closest(".filter-chip");
+  if (!chip) return;
+  state.historyFilter = chip.dataset.filter || "all";
+  saveHistoryFilter(state.historyFilter);
+  renderJobs();
+});
+
+on("#historySearchInput", "input", (event) => {
+  state.historySearch = event.currentTarget.value;
+  renderJobs();
+});
+
+on("#showArchivedToggle", "change", (event) => {
+  state.showArchived = Boolean(event.currentTarget.checked);
+  renderJobs();
+});
+
+on("#dismissOnboardingButton", "click", () => {
+  markOnboardingDone();
+  updateOnboardingVisibility();
+});
+
+on("#notifyToggle", "change", async (event) => {
+  const enabled = Boolean(event.currentTarget.checked);
+  if (enabled) {
+    const granted = await requestNotificationPermission();
+    if (!granted) {
+      event.currentTarget.checked = false;
+      saveNotifyEnabled(false);
+      showToast(t("notify.permissionDenied"));
+      return;
+    }
+  }
+  saveNotifyEnabled(enabled);
 });
 
 on("#chatOutput", "scroll", () => {
@@ -1676,6 +2005,12 @@ setModeSelect($("#modeSelect"), loadSavedMode());
 bindModelSettings("submit");
 bindModelSettings("followUp");
 applyModels(FALLBACK_MODELS, { id: "default" });
+state.historyFilter = loadHistoryFilter();
+state.archivedJobIds = loadArchivedJobIds();
+state.notifyEnabled = loadNotifyEnabled();
+updateFilterChips();
+setupPullToRefresh();
+window.addEventListener("resize", updateWideLayout);
 ensureMarkdownLibs().catch((error) => {
   console.warn("Markdown 组件加载失败", error);
 });
