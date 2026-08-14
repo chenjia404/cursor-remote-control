@@ -261,6 +261,10 @@ button.small {
   min-width: 0;
 }
 
+.tab-panel.active:not([hidden]) {
+  display: flex !important;
+}
+
 .tab-panel[hidden] {
   display: none !important;
 }
@@ -482,7 +486,14 @@ button.small {
 }
 
 .projects-panel {
-  padding-bottom: 0.5rem;
+  padding: 0 0.75rem 0.75rem;
+}
+
+.project-current-card {
+  background: rgba(56, 189, 248, 0.08);
+  border: 1px solid rgba(56, 189, 248, 0.28);
+  border-radius: 1rem;
+  padding: 0.85rem;
 }
 
 .project-list {
@@ -525,7 +536,20 @@ button.small {
   white-space: nowrap;
 }
 
-.browse-open-btn {
+.project-item-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+  justify-content: flex-end;
+  margin-top: 0.45rem;
+}
+
+.project-item-actions .ghost {
+  font-size: 0.72rem;
+  padding: 0.25rem 0.55rem;
+}
+
+#browseOpenButton {
   width: 100%;
 }
 

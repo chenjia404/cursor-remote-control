@@ -7,7 +7,7 @@ import {
   setLocale,
   t,
   translateApiError,
-} from "./i18n.js?v=0.2.22";
+} from "./i18n.js?v=0.2.23";
 
 let markedRef = null;
 let purifyRef = null;
@@ -319,6 +319,7 @@ function switchTab(tabId) {
   document.querySelectorAll(".main-panel .tab-panel").forEach((panel) => {
     const active = panel.dataset.tab === tab;
     panel.classList.toggle("active", active);
+    panel.classList.toggle("hidden", !active);
     panel.hidden = !active;
   });
 
@@ -694,15 +695,48 @@ function ensureSelectedProject() {
   }
 }
 
+function selectedProjectName() {
+  return findProject(state.selectedProjectId)?.name || t("project.noneSelected");
+}
+
 function updateNewTaskProjectLabel() {
+  const projectName = selectedProjectName();
   const label = $("#newTaskProjectName");
-  if (!label) return;
-  const project = findProject(state.selectedProjectId);
-  label.textContent = project ? project.name : t("project.noneSelected");
+  if (label) label.textContent = projectName;
+  const current = $("#projectCurrentName");
+  if (current) current.textContent = projectName;
+}
+
+function selectProjectById(projectId) {
+  const project = findProject(projectId);
+  if (!project || state.selectedProjectId === projectId) return;
+  saveSelectedProjectId(projectId);
+  renderProjectList();
+  updateContextHeader();
+  showToast(t("project.switched", { name: project.name }));
+}
+
+const removingProjectIds = new Set();
+
+async function removeConfirmedProject(projectId) {
+  if (!projectId || removingProjectIds.has(projectId)) return;
+  removingProjectIds.add(projectId);
+  const project = findProject(projectId);
+  try {
+    await api(`/api/projects/${encodeURIComponent(projectId)}`, { method: "DELETE" });
+    if (state.selectedProjectId === projectId) {
+      saveSelectedProjectId("");
+    }
+    await refreshData();
+    showToast(t("project.removed", { name: project?.name || "" }));
+  } finally {
+    removingProjectIds.delete(projectId);
+  }
 }
 
 function renderProjectList() {
   const list = $("#projectList");
+  if (!list) return;
   const hint = $("#projectSelectHint");
   const keyword = $("#projectSearchInput")?.value.trim().toLowerCase() || "";
   const projects = state.projects.filter((project) => {
@@ -727,13 +761,24 @@ function renderProjectList() {
 
   list.innerHTML = projects
     .map((project) => {
-      const activeClass = project.id === state.selectedProjectId ? " active" : "";
+      const selected = project.id === state.selectedProjectId;
+      const activeClass = selected ? " active" : "";
       const modifiedAt = project.modifiedAt ? formatDateTime(project.modifiedAt) : t("project.unknownTime");
+      const badge = selected
+        ? `<span class="mode-badge mode-agent">${escapeHtml(t("project.currentBadge"))}</span>`
+        : "";
+      const useLabel = selected ? t("project.using") : t("project.use");
       return `
-        <button type="button" class="project-item${activeClass}" data-project-id="${escapeHtml(project.id)}">
-          <span class="project-item-name">${escapeHtml(project.name)}</span>
-          <span class="project-item-path">${escapeHtml(modifiedAt)} · ${escapeHtml(project.path)}</span>
-        </button>
+        <article class="project-item${activeClass}" data-project-id="${escapeHtml(project.id)}">
+          <div class="project-item-summary">
+            <span class="project-item-name">${escapeHtml(project.name)}${badge}</span>
+            <span class="project-item-path">${escapeHtml(modifiedAt)} · ${escapeHtml(project.path)}</span>
+          </div>
+          <div class="project-item-actions">
+            <button type="button" class="ghost small project-use-btn" data-project-id="${escapeHtml(project.id)}"${selected ? " disabled" : ""}>${escapeHtml(useLabel)}</button>
+            <button type="button" class="ghost small danger project-remove-btn" data-project-id="${escapeHtml(project.id)}">${escapeHtml(t("project.remove"))}</button>
+          </div>
+        </article>
       `;
     })
     .join("");
@@ -1072,7 +1117,7 @@ function updateContextHeader(job = state.currentJob) {
 
   if (state.activeTab === "projects") {
     eyebrow.textContent = t("nav.projects");
-    title.textContent = t("nav.projects");
+    title.textContent = selectedProjectName();
     status.classList.add("hidden");
     return;
   }
@@ -1680,10 +1725,23 @@ on("#stopJobButton", "click", () => {
 on("#projectSearchInput", "input", renderProjectList);
 
 on("#projectList", "click", (event) => {
-  const item = event.target.closest("[data-project-id]");
+  const removeButton = event.target.closest(".project-remove-btn");
+  if (removeButton) {
+    event.stopPropagation();
+    removeConfirmedProject(removeButton.dataset.projectId).catch((error) => showToast(error.message));
+    return;
+  }
+
+  const useButton = event.target.closest(".project-use-btn");
+  if (useButton) {
+    event.stopPropagation();
+    selectProjectById(useButton.dataset.projectId);
+    return;
+  }
+
+  const item = event.target.closest(".project-item");
   if (!item) return;
-  saveSelectedProjectId(item.dataset.projectId);
-  renderProjectList();
+  selectProjectById(item.dataset.projectId);
 });
 
 on("#browseOpenButton", "click", async () => {
