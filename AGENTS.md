@@ -65,6 +65,7 @@ pnpm generate-icons
 - 不要添加任意 Shell 输入框。
 - 不要允许网页直接执行系统命令。
 - 不要把 `.env`、管理员密码、`CURSOR_API_KEY`、Session 密钥或 `data/` 下的运行时数据写入 Git。
+- 提交说明、代码注释、文档和示例中不要写入真实域名、IP、隧道地址、机器名、邮箱、密钥或个人云服务实例名；用泛称（CDN、反代）或占位符（`https://your.example.com`）。详见 `.cursor/rules/no-private-info.mdc`。
 - `PROJECT_ROOTS` 只应配置本机 Windows 项目根目录，例如 `E:\code;D:\code;C:\code`，不要配置整个系统盘，也不要使用 Docker 容器内路径。
 
 - 项目路径必须经过 `src/projects.ts` 的根目录校验后才能传给 Cursor SDK。

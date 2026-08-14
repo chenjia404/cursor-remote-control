@@ -1,0 +1,32 @@
+---
+description: 提交记录、注释、文档中禁止写入隐私或真实环境信息
+alwaysApply: true
+---
+
+# 脱敏：不要写入隐私或真实信息
+
+Git 提交说明、代码注释、文档、示例、日志和错误文案里，只写可公开的占位符或泛称。真实环境信息留在本机 `.env`、`data/` 或用户私聊中。
+
+## 禁止写入
+
+- 真实域名、子域名、隧道地址、公网 URL
+- 内网/公网 IP、机器名、Windows 用户名、邮箱、手机号
+- 密码、哈希、`CURSOR_API_KEY`、Session 密钥、Cookie、Token
+- 具体 CDN / 反代厂商账号、隧道名、个人云服务实例名
+- `data/` 运行时内容、真实项目路径（文档里已有的通用示例除外）
+
+## 应当使用
+
+- 泛称：CDN、HTTPS 反代、源站、边缘缓存
+- 占位符：`https://your.example.com`、`CURSOR_API_KEY=cursor_xxx`
+- 文档已约定的通用路径示例：`E:\code;D:\code;C:\code`
+
+```text
+❌ 修复 https://my-tunnel.example-cdn.io/styles.css 公网 404
+✅ 避免 CDN 缓存导致 styles.css 公网 404
+
+❌ // xxscan 这类 CDN 默认缓存 .css
+✅ // 部分 CDN 默认缓存 .css，一旦缓存了 404，页面会一直丢样式
+```
+
+发现已写入的真实信息：改掉后再提交；若只在刚做、未推送的提交说明里，应修正提交说明而不是再开一条暴露原文的提交。
