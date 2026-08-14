@@ -7,6 +7,7 @@
   --header-h: 3.6rem;
   --bottom-nav-h: 3.75rem;
   --composer-h: 0px;
+  --sidebar-w: min(320px, 38vw);
   --safe-bottom: env(safe-area-inset-bottom, 0px);
 }
 
@@ -236,21 +237,192 @@ button.small {
   justify-content: flex-end;
 }
 
-.tab-panels {
+.app-body {
+  display: flex;
   flex: 1;
+  flex-direction: column;
   min-height: 0;
+}
+
+.main-panel {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
 }
 
 .tab-panel {
   display: flex;
+  flex: 1;
   flex-direction: column;
   gap: 0.75rem;
   min-height: calc(100vh - var(--header-h) - var(--bottom-nav-h) - var(--composer-h));
-  padding: 0.75rem;
+  min-width: 0;
 }
 
 .tab-panel[hidden] {
   display: none !important;
+}
+
+.history-aside {
+  display: none;
+  flex-direction: column;
+  min-height: 0;
+}
+
+#appView[data-active-tab="history"] .history-aside {
+  display: flex;
+  flex: 1;
+}
+
+.history-panel {
+  padding: 0 0.75rem 0.75rem;
+}
+
+.filter-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+}
+
+.filter-chip {
+  background: rgba(2, 6, 23, 0.55);
+  border: 1px solid #334155;
+  border-radius: 999px;
+  color: #94a3b8;
+  font-size: 0.78rem;
+  font-weight: 600;
+  padding: 0.35rem 0.7rem;
+}
+
+.filter-chip.active {
+  background: rgba(56, 189, 248, 0.18);
+  border-color: rgba(56, 189, 248, 0.45);
+  color: #e0f2fe;
+}
+
+.inline-toggle {
+  align-items: center;
+  color: #cbd5e1;
+  display: flex;
+  font-size: 0.88rem;
+  gap: 0.5rem;
+}
+
+.inline-toggle input {
+  margin: 0;
+  width: auto;
+}
+
+.settings-toggle {
+  justify-content: space-between;
+}
+
+.pull-refresh-zone {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior-y: contain;
+  position: relative;
+  -webkit-overflow-scrolling: touch;
+}
+
+.session-pull-zone {
+  padding: 0 0.75rem 0.75rem;
+}
+
+.pull-refresh-indicator {
+  align-items: center;
+  color: #7dd3fc;
+  display: flex;
+  font-size: 0.78rem;
+  height: 0;
+  justify-content: center;
+  overflow: hidden;
+  transition: height 0.15s ease;
+}
+
+.pull-refresh-zone.is-pulling .pull-refresh-indicator,
+.pull-refresh-zone.is-refreshing .pull-refresh-indicator {
+  height: 2rem;
+}
+
+.pull-refresh-zone.is-refreshing .pull-refresh-text::after {
+  animation: spin 0.8s linear infinite;
+  content: " ⟳";
+  display: inline-block;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.onboarding {
+  background: rgba(56, 189, 248, 0.08);
+  border: 1px solid rgba(56, 189, 248, 0.28);
+  border-radius: 1rem;
+  margin-bottom: 0.75rem;
+  padding: 0.85rem;
+}
+
+.onboarding-title {
+  font-weight: 700;
+  margin: 0 0 0.5rem;
+}
+
+.onboarding-steps {
+  color: #cbd5e1;
+  margin: 0 0 0.75rem;
+  padding-left: 1.2rem;
+}
+
+.onboarding-steps li + li {
+  margin-top: 0.25rem;
+}
+
+.model-advanced {
+  border: 1px solid #334155;
+  border-radius: 0.85rem;
+  padding: 0.55rem 0.75rem;
+}
+
+.model-advanced summary {
+  color: #cbd5e1;
+  cursor: pointer;
+  font-size: 0.9rem;
+  font-weight: 600;
+  list-style: none;
+  user-select: none;
+}
+
+.model-advanced summary::-webkit-details-marker {
+  display: none;
+}
+
+.model-advanced[open] {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.job-item {
+  position: relative;
+}
+
+.job-item-actions {
+  display: flex;
+  gap: 0.35rem;
+  justify-content: flex-end;
+  margin-top: 0.45rem;
+}
+
+.job-item-actions .ghost {
+  font-size: 0.72rem;
+  padding: 0.25rem 0.55rem;
 }
 
 .session-empty {
@@ -1097,5 +1269,45 @@ button.small {
     top: 50%;
     transform: translate(-50%, -50%);
     width: calc(100% - 2rem);
+  }
+}
+
+@media (min-width: 900px) {
+  .app-body {
+    display: grid;
+    grid-template-columns: var(--sidebar-w) 1fr;
+    min-height: calc(100vh - var(--header-h) - var(--bottom-nav-h) - var(--composer-h));
+  }
+
+  .history-aside {
+    border-right: 1px solid rgba(148, 163, 184, 0.15);
+    display: flex !important;
+    max-height: calc(100vh - var(--header-h) - var(--bottom-nav-h) - var(--composer-h));
+  }
+
+  .history-panel {
+    padding-top: 0.75rem;
+  }
+
+  #appView.is-wide .bottom-nav .nav-item[data-tab="history"] {
+    display: none;
+  }
+
+  .tab-panel {
+    min-height: calc(100vh - var(--header-h) - var(--bottom-nav-h) - var(--composer-h));
+  }
+
+  .chat {
+    max-height: none;
+  }
+}
+
+@media (min-width: 900px) and (orientation: landscape) {
+  .app-shell {
+    max-height: 100vh;
+  }
+
+  .app-body {
+    min-height: calc(100vh - var(--header-h) - var(--bottom-nav-h) - var(--composer-h));
   }
 }
