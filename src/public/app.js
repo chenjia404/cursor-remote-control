@@ -7,7 +7,7 @@ import {
   setLocale,
   t,
   translateApiError,
-} from "./i18n.js?v=0.2.26";
+} from "./i18n.js?v=0.2.27";
 
 let markedRef = null;
 let purifyRef = null;
@@ -93,6 +93,8 @@ const HISTORY_FILTER_KEY = "cursor-rc-history-filter";
 const ARCHIVED_JOBS_KEY = "cursor-rc-archived-jobs";
 const NOTIFY_STORAGE_KEY = "cursor-rc-notify";
 const ONBOARDING_STORAGE_KEY = "cursor-rc-onboarded";
+const FOLLOW_UP_OPTIONS_KEY = "cursor-rc-follow-up-options-open";
+const SESSION_SUMMARY_KEY = "cursor-rc-session-summary-open";
 
 const state = {
   csrfToken: "",
@@ -1159,8 +1161,62 @@ function rememberFollowUpDraft() {
 
 function autosizeTextarea(input) {
   input.style.height = "auto";
-  input.style.height = `${Math.min(input.scrollHeight, 160)}px`;
+  input.style.height = `${Math.min(input.scrollHeight, 120)}px`;
   updateComposerDock();
+}
+
+function bindComposerPanels() {
+  const options = $("#followUpOptions");
+  if (options && options.dataset.bound !== "1") {
+    options.dataset.bound = "1";
+    try {
+      if (localStorage.getItem(FOLLOW_UP_OPTIONS_KEY) === "1") {
+        options.open = true;
+      }
+    } catch {
+      // localStorage 不可用时忽略
+    }
+    options.addEventListener("toggle", () => {
+      try {
+        localStorage.setItem(FOLLOW_UP_OPTIONS_KEY, options.open ? "1" : "0");
+      } catch {
+        // localStorage 不可用时忽略
+      }
+      updateComposerDock();
+    });
+  }
+
+  const dock = $("#followUpDock");
+  if (dock && dock.dataset.resizeBound !== "1") {
+    dock.dataset.resizeBound = "1";
+    dock.querySelectorAll("details").forEach((element) => {
+      element.addEventListener("toggle", updateComposerDock);
+    });
+    if (typeof ResizeObserver !== "undefined") {
+      const observer = new ResizeObserver(() => updateComposerDock());
+      observer.observe(dock);
+    }
+  }
+}
+
+function updateSessionJobLayout(hasJob) {
+  $("#sessionPullZone")?.classList.toggle("is-active-job", Boolean(hasJob));
+}
+
+function loadSessionSummaryOpen() {
+  try {
+    return localStorage.getItem(SESSION_SUMMARY_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function saveSessionSummaryOpen(open) {
+  try {
+    localStorage.setItem(SESSION_SUMMARY_KEY, open ? "1" : "0");
+  } catch {
+    // localStorage 不可用时忽略
+  }
 }
 
 function updateComposerDock() {
@@ -1263,7 +1319,7 @@ function maybeNotifyJobStatus(job) {
   }
 }
 
-function bindPullToRefresh(zone, indicator, onRefresh) {
+function bindPullToRefresh(zone, indicator, onRefresh, getScrollEl) {
   if (!zone || !indicator || zone.dataset.ptrBound === "1") return;
   zone.dataset.ptrBound = "1";
 
@@ -1271,6 +1327,7 @@ function bindPullToRefresh(zone, indicator, onRefresh) {
   let pulling = false;
   let distance = 0;
   const threshold = 68;
+  const scrollEl = () => getScrollEl?.() || zone;
 
   const reset = () => {
     pulling = false;
@@ -1282,7 +1339,7 @@ function bindPullToRefresh(zone, indicator, onRefresh) {
   zone.addEventListener(
     "touchstart",
     (event) => {
-      if (zone.scrollTop > 0) return;
+      if (scrollEl().scrollTop > 0) return;
       startY = event.touches[0].clientY;
       pulling = true;
     },
@@ -1292,7 +1349,7 @@ function bindPullToRefresh(zone, indicator, onRefresh) {
   zone.addEventListener(
     "touchmove",
     (event) => {
-      if (!pulling || zone.scrollTop > 0) return;
+      if (!pulling || scrollEl().scrollTop > 0) return;
       distance = Math.max(0, event.touches[0].clientY - startY);
       if (distance <= 0) return;
       zone.classList.add("is-pulling");
@@ -1330,6 +1387,9 @@ function setupPullToRefresh() {
       return;
     }
     await refreshData();
+  }, () => {
+    const chat = $("#chatOutput");
+    return chat && !chat.classList.contains("hidden") ? chat : $("#sessionPullZone");
   });
 }
 
@@ -1728,26 +1788,34 @@ function renderCurrentJob(job) {
     updateStopButton(null);
     updateContextHeader(null);
     updateOnboardingVisibility();
+    updateSessionJobLayout(false);
     return;
   }
 
   empty?.classList.add("hidden");
   summary?.classList.remove("hidden");
   chat?.classList.remove("hidden");
+  updateSessionJobLayout(true);
 
   const extraNames = (job.extraProjects || []).map((item) => item.name).filter(Boolean);
   const extraLabel = extraNames.length ? `<p class="meta">${escapeHtml(t("session.extraWorkspaces", { names: extraNames.join("、") }))}</p>` : "";
   const usageLabel = formatUsage(job.usage);
   summary.innerHTML = `
-    <strong>${escapeHtml(job.project.name)}</strong>
-    <span class="status status-${job.status}">${statusText(job.status)}</span>
-    ${modeBadge(job.mode)}
-    ${formatModelBadge(job.model)}
-    ${job.sandbox ? `<span class="mode-badge">${escapeHtml(t("submit.sandbox"))}</span>` : ""}
-    ${job.autoReview ? `<span class="mode-badge">${escapeHtml(t("submit.autoReview"))}</span>` : ""}
-    <p class="meta">${escapeHtml(job.promptSummary)}</p>
-    ${extraLabel}
-    ${usageLabel ? `<p class="usage-meta">${escapeHtml(usageLabel)}</p>` : ""}
+    <details class="session-summary"${loadSessionSummaryOpen() ? " open" : ""}>
+      <summary>
+        <strong>${escapeHtml(job.project.name)}</strong>
+        <span class="status status-${job.status}">${statusText(job.status)}</span>
+        ${modeBadge(job.mode)}
+        ${formatModelBadge(job.model)}
+      </summary>
+      <div class="session-summary-body">
+        ${job.sandbox ? `<span class="mode-badge">${escapeHtml(t("submit.sandbox"))}</span>` : ""}
+        ${job.autoReview ? `<span class="mode-badge">${escapeHtml(t("submit.autoReview"))}</span>` : ""}
+        <p class="meta">${escapeHtml(job.promptSummary)}</p>
+        ${extraLabel}
+        ${usageLabel ? `<p class="usage-meta">${escapeHtml(usageLabel)}</p>` : ""}
+      </div>
+    </details>
   `;
   renderChatMessages(job);
   updateFollowUpComposer(job);
@@ -2235,6 +2303,12 @@ on("#followUpInterruptButton", "click", async () => {
   }
 });
 
+on("#currentJob", "toggle", (event) => {
+  if (event.target.classList.contains("session-summary")) {
+    saveSessionSummaryOpen(event.target.open);
+  }
+});
+
 on("#followUpInput", "keydown", (event) => {
   if (event.key !== "Enter" || event.shiftKey) return;
   event.preventDefault();
@@ -2465,6 +2539,7 @@ state.archivedJobIds = loadArchivedJobIds();
 state.notifyEnabled = loadNotifyEnabled();
 updateFilterChips();
 setupPullToRefresh();
+bindComposerPanels();
 window.addEventListener("resize", updateWideLayout);
 ensureMarkdownLibs().catch((error) => {
   console.warn("Markdown 组件加载失败", error);
