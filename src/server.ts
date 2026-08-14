@@ -16,7 +16,7 @@ import {
 import { assertRequiredConfig, config } from "./config.js";
 import { cancelCursorJob, resumeQueuedConversations, scheduleConversation } from "./cursorAgent.js";
 import { createJob, enqueueJobTurn, getJob, listJobs, loadJobs, recoverInterruptedJobs } from "./jobs.js";
-import { defaultModelSelection, listCursorModels, normalizeModelSelection } from "./models.js";
+import { defaultModelSelection, listCursorModels, normalizeModelSelection, warmupModelCatalog } from "./models.js";
 import {
   browseDirectory,
   getProjectById,
@@ -82,6 +82,7 @@ async function start(): Promise<void> {
   if (resumedConversations > 0) {
     console.info(`已恢复 ${resumedConversations} 个会话中排队等待的任务`);
   }
+  warmupModelCatalog();
 
   const app = Fastify({
     logger: true,

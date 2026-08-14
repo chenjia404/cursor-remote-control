@@ -7,7 +7,7 @@ import {
   setLocale,
   t,
   translateApiError,
-} from "./i18n.js?v=0.2.17";
+} from "./i18n.js?v=0.2.18";
 
 let markedRef = null;
 let purifyRef = null;
@@ -48,6 +48,39 @@ const MODE_LABELS = {
   agent: "Agent",
   plan: "Plan",
 };
+
+const FALLBACK_MODELS = [
+  { id: "default", displayName: "Auto", aliases: ["auto"] },
+  {
+    id: "auto-smart",
+    displayName: "Auto (Router)",
+    parameters: [
+      {
+        id: "optimize_for",
+        displayName: "Optimize for",
+        values: [
+          { value: "cost", displayName: "Cost" },
+          { value: "balanced", displayName: "Balanced" },
+          { value: "intelligence", displayName: "Intelligence" },
+        ],
+      },
+    ],
+  },
+  {
+    id: "composer-2.5",
+    displayName: "Composer 2.5",
+    parameters: [
+      {
+        id: "fast",
+        displayName: "Fast",
+        values: [
+          { value: "false", displayName: "Standard" },
+          { value: "true", displayName: "Fast" },
+        ],
+      },
+    ],
+  },
+];
 
 const MODE_STORAGE_KEY = "cursor-rc-mode";
 const MODEL_STORAGE_KEY = "cursor-rc-model";
@@ -371,6 +404,42 @@ function formatModelBadge(model) {
     .filter(Boolean);
   const label = extras.length ? `${name} · ${extras.join(" / ")}` : name;
   return `<span class="mode-badge model-badge">${escapeHtml(label)}</span>`;
+}
+
+let modelRetryCount = 0;
+
+function applyModels(models, defaultModel) {
+  const list = Array.isArray(models) && models.length ? models : FALLBACK_MODELS;
+  const nextIds = list.map((item) => item.id).join("|");
+  const prevIds = state.models.map((item) => item.id).join("|");
+  const selectEmpty = !($("#modelSelect")?.options.length);
+  state.models = list;
+  state.defaultModel = defaultModel || { id: list[0]?.id || "default" };
+  if (nextIds !== prevIds || selectEmpty) {
+    renderModelSettings("submit");
+    renderModelSettings("followUp");
+  }
+}
+
+async function loadModels(retry = true) {
+  try {
+    const data = await api("/api/models");
+    applyModels(data.models, data.defaultModel);
+  } catch {
+    applyModels(FALLBACK_MODELS, { id: "default" });
+  }
+
+  if (state.models.length > FALLBACK_MODELS.length) {
+    modelRetryCount = 0;
+    return;
+  }
+
+  if (retry && modelRetryCount < 6) {
+    modelRetryCount += 1;
+    window.setTimeout(() => {
+      loadModels(true).catch(() => undefined);
+    }, 5000);
+  }
 }
 
 function bindModelSettings(kind) {
@@ -966,28 +1035,12 @@ async function submitFollowUp(prompt, jobId) {
 }
 
 async function refreshData() {
-  const [projectsData, jobsData, modelsData] = await Promise.all([
-    api("/api/projects"),
-    api("/api/jobs"),
-    api("/api/models").catch(() => null),
-  ]);
+  const [projectsData, jobsData] = await Promise.all([api("/api/projects"), api("/api/jobs")]);
   state.projects = projectsData.projects;
-  const nextModels = modelsData?.models || [];
-  const nextIds = nextModels.map((item) => item.id).join("|");
-  const prevIds = state.models.map((item) => item.id).join("|");
-  if (nextModels.length) {
-    state.models = nextModels;
-    state.defaultModel = modelsData.defaultModel || { id: "auto" };
-    if (nextIds !== prevIds) {
-      renderModelSettings("submit");
-      renderModelSettings("followUp");
-    }
-  } else if (!state.models.length) {
-    showToast(t("toast.modelsFailed"));
-  }
   state.jobs = jobsData.jobs;
   renderProjects();
   renderJobs();
+  void loadModels();
 
   if (state.currentJobId) {
     await refreshCurrentJob();
@@ -1377,6 +1430,7 @@ updateInstallButtonVisibility();
 setModeSelect($("#modeSelect"), loadSavedMode());
 bindModelSettings("submit");
 bindModelSettings("followUp");
+applyModels(FALLBACK_MODELS, { id: "default" });
 ensureMarkdownLibs().catch((error) => {
   console.warn("Markdown 组件加载失败", error);
 });

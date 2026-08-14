@@ -1,3 +1,5 @@
+import fs from "node:fs/promises";
+import path from "node:path";
 import { Cursor, type ModelListItem, type ModelParameterValue, type ModelSelection } from "@cursor/sdk";
 import { config } from "./config.js";
 
@@ -8,10 +10,11 @@ export type AgentModelSelection = {
 
 const MODEL_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,79}$/;
 const PARAM_TEXT_PATTERN = /^[a-zA-Z0-9._:-]{1,64}$/;
-const CACHE_TTL_MS = 5 * 60 * 1000;
+const CACHE_TTL_MS = 30 * 60 * 1000;
+const FETCH_TIMEOUT_MS = 25000;
 
 const FALLBACK_MODELS: ModelListItem[] = [
-  { id: "auto", displayName: "Auto" },
+  { id: "default", displayName: "Auto", aliases: ["auto"] },
   {
     id: "auto-smart",
     displayName: "Auto (Router)",
@@ -44,6 +47,27 @@ const FALLBACK_MODELS: ModelListItem[] = [
 ];
 
 let catalogCache: { at: number; items: ModelListItem[] } | null = null;
+let fetchInFlight: Promise<ModelListItem[]> | null = null;
+
+function modelsCacheFile(): string {
+  return path.join(config.dataDir, "models-cache.json");
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(label)), timeoutMs);
+    promise.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
+}
 
 function isValidModelId(id: string): boolean {
   return MODEL_ID_PATTERN.test(id);
@@ -71,7 +95,7 @@ function defaultParamsForModel(model: ModelListItem): ModelParameterValue[] {
   if (preset?.params?.length) return preset.params.map((item) => ({ id: item.id, value: item.value }));
 
   return (model.parameters ?? []).flatMap((parameter) => {
-    const value = parameter.values[0]?.value;
+    const value = parameter.values?.[0]?.value;
     return value ? [{ id: parameter.id, value }] : [];
   });
 }
@@ -92,9 +116,9 @@ function constrainParams(model: ModelListItem, params: ModelParameterValue[]): M
 
   const byId = new Map(params.map((item) => [item.id, item.value]));
   return definitions.flatMap((parameter) => {
-    const allowed = new Set(parameter.values.map((item) => item.value));
+    const allowed = new Set((parameter.values ?? []).map((item) => item.value));
     const requested = byId.get(parameter.id);
-    const value = requested && allowed.has(requested) ? requested : parameter.values[0]?.value;
+    const value = requested && allowed.has(requested) ? requested : parameter.values?.[0]?.value;
     return value ? [{ id: parameter.id, value }] : [];
   });
 }
@@ -149,24 +173,85 @@ function asModelList(value: unknown): ModelListItem[] {
   return [];
 }
 
+function toPlainCatalog(items: ModelListItem[]): ModelListItem[] {
+  try {
+    return JSON.parse(JSON.stringify(items)) as ModelListItem[];
+  } catch {
+    return FALLBACK_MODELS;
+  }
+}
+
+async function readDiskCache(): Promise<ModelListItem[] | null> {
+  try {
+    const text = await fs.readFile(modelsCacheFile(), "utf8");
+    const parsed = JSON.parse(text) as { items?: unknown };
+    const items = asModelList(parsed.items ?? parsed).filter((item) => item?.id && isValidModelId(item.id));
+    return items.length ? items : null;
+  } catch {
+    return null;
+  }
+}
+
+async function writeDiskCache(items: ModelListItem[]): Promise<void> {
+  try {
+    await fs.mkdir(config.dataDir, { recursive: true });
+    await fs.writeFile(modelsCacheFile(), JSON.stringify({ at: Date.now(), items }, null, 2), "utf8");
+  } catch (error) {
+    console.warn("保存模型目录缓存失败", error);
+  }
+}
+
+async function fetchRemoteCatalog(): Promise<ModelListItem[]> {
+  const listed = await withTimeout(
+    Cursor.models.list({ apiKey: config.cursorApiKey }),
+    FETCH_TIMEOUT_MS,
+    "获取模型列表超时",
+  );
+  const items = toPlainCatalog(asModelList(listed).filter((item) => item?.id && isValidModelId(item.id)));
+  if (!items.length) throw new Error("模型列表为空");
+  catalogCache = { at: Date.now(), items };
+  void writeDiskCache(items);
+  return items;
+}
+
+async function refreshCatalogInBackground(): Promise<void> {
+  if (fetchInFlight) return;
+  fetchInFlight = fetchRemoteCatalog()
+    .catch((error) => {
+      console.warn("后台刷新模型列表失败", error);
+      return catalogCache?.items ?? FALLBACK_MODELS;
+    })
+    .finally(() => {
+      fetchInFlight = null;
+    });
+  await fetchInFlight;
+}
+
 export async function listCursorModels(): Promise<ModelListItem[]> {
   const now = Date.now();
   if (catalogCache && now - catalogCache.at < CACHE_TTL_MS) {
     return catalogCache.items;
   }
 
-  try {
-    const listed = await Cursor.models.list({ apiKey: config.cursorApiKey });
-    const items = asModelList(listed).filter((item) => item?.id && isValidModelId(item.id));
-    const catalog = items.length > 0 ? items : FALLBACK_MODELS;
-    catalogCache = { at: now, items: catalog };
-    return catalog;
-  } catch (error) {
-    console.warn("获取 Cursor 模型列表失败，使用本地回退目录", error);
-    if (catalogCache) return catalogCache.items;
-    catalogCache = { at: now, items: FALLBACK_MODELS };
-    return FALLBACK_MODELS;
+  if (catalogCache) {
+    void refreshCatalogInBackground();
+    return catalogCache.items;
   }
+
+  const disk = await readDiskCache();
+  if (disk) {
+    catalogCache = { at: 0, items: disk };
+    void refreshCatalogInBackground();
+    return disk;
+  }
+
+  catalogCache = { at: 0, items: FALLBACK_MODELS };
+  void refreshCatalogInBackground();
+  return FALLBACK_MODELS;
+}
+
+export function warmupModelCatalog(): void {
+  void listCursorModels();
 }
 
 export async function resolveModelSelection(input: unknown): Promise<AgentModelSelection> {
