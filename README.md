@@ -16,6 +16,8 @@
 - 默认监听端口 `20267`。
 - 支持在 `PROJECT_ROOTS` 范围内按目录浏览并确认项目；下拉列表只显示已确认过的项目。
 - 通过 Cursor SDK 的本地模式在项目目录中执行 Agent 任务。
+- 默认加载本机项目规则、Skills 与 MCP；可附加多个已确认工作区、限制工具、开启沙箱 / Auto-review，并支持图片输入。
+- 会话中展示工具调用、用量，以及思考与回复。
 - 保存任务历史、运行状态、Agent ID、Run ID 和日志。一个任务即一轮会话，可在同一任务内追加多轮指令。任务进行中时默认排队，也可点「追加」中断当前轮立刻执行。
 - 支持 PWA，可在手机浏览器中安装到主屏幕。
 - 界面支持中文 / English 切换。
@@ -48,6 +50,8 @@ CURSOR_API_KEY=cursor_xxx
 PROJECT_ROOTS=E:\code;D:\code;C:\code
 COOKIE_SECURE=false
 ```
+
+可选：`CURSOR_SETTING_SOURCES`（默认 `project,user,plugins`，加载本机规则 / Skills / MCP）、`CURSOR_SANDBOX`、`CURSOR_AUTO_REVIEW`、`CURSOR_DISALLOWED_TOOLS`。任务提交时仍可在网页上覆盖这些开关。
 
 `PROJECT_ROOTS` 使用英文分号分隔多个目录，路径为本机 Windows 路径。建议只配置项目根目录，不要配置整个系统盘。
 

@@ -52,6 +52,8 @@ pnpm generate-icons
 - `src/projects.ts`：已选项目持久化、目录浏览、路径安全校验与项目标记检测。
 - `src/jobs.ts`：任务历史、多轮对话、任务状态、日志持久化。
 - `src/cursorAgent.ts`：Cursor SDK 本地 Agent 执行封装。
+- `src/agentOptions.ts`：本地规则/MCP、沙箱、工具限制、附加工作区等 Agent 选项。
+- `src/jobImages.ts`：任务附图校验与落盘。
 - `src/public/`：移动端 Web 页面和 PWA 静态资源。
 - `src/public/i18n.js`：前端中英文文案与语言切换（偏好保存在 localStorage）。
 - `README.en.md`：英文说明文档，与 `README.md` 互链。
@@ -135,8 +137,12 @@ pnpm autostart:uninstall
 - `CURSOR_API_KEY` 必须在 `.env` 中配置真实值。
 - `CURSOR_MODEL` 默认可使用 `auto`。
 - `CURSOR_DEFAULT_MODE` 可选 `agent` 或 `plan`，作为未指定模式时的默认值。
+- `CURSOR_SETTING_SOURCES` 默认 `project,user,plugins`，让本地 Agent 读取项目规则、Skills 和本机 MCP；设为 `all` 则包含 team/mdm。
+- `CURSOR_SANDBOX` / `CURSOR_AUTO_REVIEW` 为任务默认开关；网页仍可按任务覆盖。
+- `CURSOR_DISALLOWED_TOOLS` 为始终禁用的工具名单，网页只能再追加禁用项。
 - Cursor SDK 当前仅支持 `agent` 与 `plan` 两种对话模式；可通过 `Agent.create({ mode })` 与 `agent.send(prompt, { mode })` 切换。
-- Agent 输出是流式分片，写日志时需要合并连续 assistant 内容，避免界面出现一行一个词。
+- 创建/恢复 Agent 时必须再次传入 `settingSources`、`dirs`、`disallowedTools`、沙箱和 Auto-review；这些选项不会随 `agentId` 持久化。
+- Agent 输出是流式分片，写日志时需要合并连续 assistant 内容，避免界面出现一行一个词；工具调用按 `call_id` 覆盖更新。
 - 追加指令写入同一任务的 `turns`，通过 `Agent.resume` 继续同一会话，不要再拆成新的子任务。
 - 后续指令默认 `delivery: "queue"`（等当前轮结束）；`interrupt` 会取消当前 Run 并把新轮次插到队首立刻执行。Cursor SDK 本地模式没有真正的「注入当前 Run」接口，追加只能通过中断当前轮实现。
 

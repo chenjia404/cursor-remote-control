@@ -1,7 +1,10 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import crypto from "node:crypto";
+import type { ToolName } from "@cursor/sdk";
+import type { ExtraProjectRef } from "./agentOptions.js";
 import { config } from "./config.js";
+import type { JobImageMeta } from "./jobImages.js";
 import { formatModelSelection, type AgentModelSelection } from "./models.js";
 import type { ProjectInfo } from "./projects.js";
 
@@ -13,11 +16,23 @@ export type AgentMode = "agent" | "plan";
 /** 后续指令投递：排队等当前轮结束，或中断当前轮立刻执行 */
 export type FollowUpDelivery = "queue" | "interrupt";
 
+export type JobLogLevel = "info" | "thinking" | "assistant" | "error" | "tool" | "status";
+
 export type JobLog = {
   time: string;
-  level: "info" | "thinking" | "assistant" | "error";
+  level: JobLogLevel;
   message: string;
   turnId?: string;
+  source?: string;
+};
+
+export type JobTokenUsage = {
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  totalTokens: number;
+  reasoningTokens?: number;
 };
 
 /** 同一任务内的一轮用户指令 */
@@ -34,6 +49,12 @@ export type JobTurn = {
   error?: string;
   /** 中断投递的轮次启动时会强制结束残留 Run */
   delivery?: FollowUpDelivery;
+  images?: JobImageMeta[];
+  loadLocalSettings?: boolean;
+  sandbox?: boolean;
+  autoReview?: boolean;
+  disallowedTools?: ToolName[];
+  usage?: JobTokenUsage;
 };
 
 export type JobRecord = {
@@ -57,6 +78,12 @@ export type JobRecord = {
   result?: string;
   error?: string;
   turns: JobTurn[];
+  extraProjects?: ExtraProjectRef[];
+  loadLocalSettings?: boolean;
+  sandbox?: boolean;
+  autoReview?: boolean;
+  disallowedTools?: ToolName[];
+  usage?: JobTokenUsage;
   activeTurnId?: string;
   logs: JobLog[];
 };
@@ -86,6 +113,11 @@ function createTurn(input: {
   model?: AgentModelSelection;
   status?: JobStatus;
   delivery?: FollowUpDelivery;
+  images?: JobImageMeta[];
+  loadLocalSettings?: boolean;
+  sandbox?: boolean;
+  autoReview?: boolean;
+  disallowedTools?: ToolName[];
 }): JobTurn {
   return {
     id: crypto.randomUUID(),
@@ -95,6 +127,11 @@ function createTurn(input: {
     mode: input.mode,
     model: input.model,
     delivery: input.delivery,
+    images: input.images,
+    loadLocalSettings: input.loadLocalSettings,
+    sandbox: input.sandbox,
+    autoReview: input.autoReview,
+    disallowedTools: input.disallowedTools,
   };
 }
 
@@ -342,9 +379,24 @@ export function createJob(input: {
   sourceIp: string;
   mode: AgentMode;
   model?: AgentModelSelection;
+  extraProjects?: ExtraProjectRef[];
+  loadLocalSettings?: boolean;
+  sandbox?: boolean;
+  autoReview?: boolean;
+  disallowedTools?: ToolName[];
+  images?: JobImageMeta[];
 }): JobRecord {
   const timestamp = now();
-  const turn = createTurn({ prompt: input.prompt, mode: input.mode, model: input.model });
+  const turn = createTurn({
+    prompt: input.prompt,
+    mode: input.mode,
+    model: input.model,
+    images: input.images,
+    loadLocalSettings: input.loadLocalSettings,
+    sandbox: input.sandbox,
+    autoReview: input.autoReview,
+    disallowedTools: input.disallowedTools,
+  });
   const job: JobRecord = {
     id: crypto.randomUUID(),
     project: {
@@ -361,6 +413,11 @@ export function createJob(input: {
     sourceIp: input.sourceIp,
     mode: input.mode,
     model: input.model,
+    extraProjects: input.extraProjects,
+    loadLocalSettings: input.loadLocalSettings,
+    sandbox: input.sandbox,
+    autoReview: input.autoReview,
+    disallowedTools: input.disallowedTools,
     turns: [turn],
     activeTurnId: turn.id,
     logs: [],
@@ -378,8 +435,13 @@ export function enqueueJobTurn(
     mode: AgentMode;
     model?: AgentModelSelection;
     delivery?: FollowUpDelivery;
+    images?: JobImageMeta[];
+    loadLocalSettings?: boolean;
+    sandbox?: boolean;
+    autoReview?: boolean;
+    disallowedTools?: ToolName[];
   },
-): JobRecord {
+): { job: JobRecord; turn: JobTurn } {
   const rootId = getConversationRootId(jobId);
   const job = jobs.get(rootId);
   if (!job) throw new Error("任务不存在");
@@ -391,10 +453,19 @@ export function enqueueJobTurn(
     mode: input.mode,
     model: input.model,
     delivery,
+    images: input.images,
+    loadLocalSettings: input.loadLocalSettings,
+    sandbox: input.sandbox,
+    autoReview: input.autoReview,
+    disallowedTools: input.disallowedTools,
   });
   insertFollowUpTurn(job, turn, delivery);
   job.mode = input.mode;
   if (input.model) job.model = input.model;
+  if (input.loadLocalSettings !== undefined) job.loadLocalSettings = input.loadLocalSettings;
+  if (input.sandbox !== undefined) job.sandbox = input.sandbox;
+  if (input.autoReview !== undefined) job.autoReview = input.autoReview;
+  if (input.disallowedTools) job.disallowedTools = input.disallowedTools;
   job.updatedAt = now();
   syncJobStatusFromTurns(job);
 
@@ -407,7 +478,7 @@ export function enqueueJobTurn(
     message = `已加入排队（${settings}），当前轮次结束后将自动执行。`;
   }
   appendJobLog(job.id, "info", message, turn.id);
-  return job;
+  return { job, turn };
 }
 
 export function listJobs(): JobRecord[] {
@@ -446,7 +517,13 @@ export function updateTurn(jobId: string, turnId: string, patch: Partial<JobTurn
   return turn;
 }
 
-export function appendJobLog(id: string, level: JobLog["level"], message: string, turnId?: string): void {
+export function appendJobLog(
+  id: string,
+  level: JobLog["level"],
+  message: string,
+  turnId?: string,
+  source?: string,
+): void {
   const job = jobs.get(getConversationRootId(id));
   if (!job) throw new Error("任务不存在");
 
@@ -456,19 +533,36 @@ export function appendJobLog(id: string, level: JobLog["level"], message: string
 
   const lastLog = job.logs.at(-1);
   // 流式片段按同类日志合并，便于聊天气泡连续展示
+  const sameTurnLast = lastLog && lastLog.turnId === resolvedTurnId ? lastLog : undefined;
   if (
+    sameTurnLast &&
     (level === "assistant" || level === "thinking") &&
-    lastLog?.level === level &&
-    lastLog.turnId === resolvedTurnId
+    sameTurnLast.level === level
   ) {
-    const mergedMessage = `${lastLog.message}${safeMessage}`;
-    lastLog.message =
+    const mergedMessage = `${sameTurnLast.message}${safeMessage}`;
+    sameTurnLast.message =
       mergedMessage.length > MAX_LOG_MESSAGE_LENGTH
         ? `${mergedMessage.slice(0, MAX_LOG_MESSAGE_LENGTH)}\n...日志过长，已截断。`
         : mergedMessage;
-    lastLog.time = now();
+    sameTurnLast.time = now();
+  } else if (source) {
+    let existing;
+    for (let index = job.logs.length - 1; index >= 0; index -= 1) {
+      const item = job.logs[index];
+      if (item.source === source && item.turnId === resolvedTurnId) {
+        existing = item;
+        break;
+      }
+    }
+    if (existing) {
+      existing.message = safeMessage;
+      existing.level = level;
+      existing.time = now();
+    } else {
+      job.logs.push({ time: now(), level, message: safeMessage, turnId: resolvedTurnId, source });
+    }
   } else {
-    job.logs.push({ time: now(), level, message: safeMessage, turnId: resolvedTurnId });
+    job.logs.push({ time: now(), level, message: safeMessage, turnId: resolvedTurnId, source });
   }
 
   if (job.logs.length > MAX_LOG_ENTRIES) {

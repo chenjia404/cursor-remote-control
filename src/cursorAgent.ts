@@ -3,10 +3,20 @@ import {
   CursorAgentError,
   UnsupportedRunOperationError,
   type AgentModeOption,
+  type AgentOptions,
+  type AgentUsage,
   type ModelSelection,
   type Run,
+  type SDKUserMessage,
   type SendOptions,
+  type TokenUsage,
 } from "@cursor/sdk";
+import {
+  extraWorkspacePaths,
+  mergeDisallowedTools,
+  settingSourcesForRun,
+  type AgentRunOptions,
+} from "./agentOptions.js";
 import { config } from "./config.js";
 import {
   appendJobLog,
@@ -18,14 +28,17 @@ import {
   updateJob,
   updateTurn,
   type JobRecord,
+  type JobTokenUsage,
   type JobTurn,
 } from "./jobs.js";
+import { loadJobImagesForSdk } from "./jobImages.js";
 import { formatModelSelection, resolveModelSelection, toSdkModel } from "./models.js";
 
 type DisposableAgent = {
   agentId?: string;
   model?: ModelSelection;
-  send: (prompt: string, options?: SendOptions) => Promise<Run>;
+  send: (message: string | SDKUserMessage, options?: SendOptions) => Promise<Run>;
+  getUsage?: (options?: { runId?: string }) => Promise<AgentUsage>;
   [Symbol.asyncDispose]?: () => Promise<void>;
 };
 
@@ -46,31 +59,157 @@ function unwrapSdkMessage(event: unknown): unknown {
   return event;
 }
 
-function extractStreamText(
-  event: unknown,
-): { level: "assistant" | "thinking"; text: string } | null {
+function truncatePreview(value: unknown, max = 800): string {
+  if (value == null) return "";
+  try {
+    if (typeof value === "string") {
+      return value.length > max ? `${value.slice(0, max)}…` : value;
+    }
+    const text = JSON.stringify(value, (_key, nested) => {
+      if (typeof nested === "string" && nested.length > max) return `${nested.slice(0, max)}…`;
+      return nested;
+    });
+    if (!text) return "";
+    return text.length > max ? `${text.slice(0, max)}…` : text;
+  } catch {
+    return "[无法显示]";
+  }
+}
+
+function extractStreamLogs(event: unknown): Array<{
+  level: "assistant" | "thinking" | "tool" | "status" | "error";
+  text: string;
+  source?: string;
+}> {
   const value = unwrapSdkMessage(event) as {
     type?: string;
     text?: string;
-    message?: {
-      content?: Array<{ type?: string; text?: string }>;
+    name?: string;
+    call_id?: string;
+    status?: string;
+    args?: unknown;
+    result?: unknown;
+    usage?: TokenUsage;
+    tools?: string[];
+    message?: string | {
+      content?: Array<{ type?: string; text?: string; name?: string }>;
     };
   };
 
   if (value.type === "assistant") {
-    const blocks = value.message?.content ?? [];
+    const blocks = typeof value.message === "object" && value.message ? value.message.content ?? [] : [];
     const text = blocks
       .filter((block) => block.type === "text" && typeof block.text === "string")
       .map((block) => block.text)
       .join("");
-    return text ? { level: "assistant", text } : null;
+    if (text) return [{ level: "assistant", text }];
+    return [];
   }
 
   if (value.type === "thinking" && typeof value.text === "string" && value.text) {
-    return { level: "thinking", text: value.text };
+    return [{ level: "thinking", text: value.text }];
   }
 
-  return null;
+  if (value.type === "tool_call") {
+    const name = value.name || "tool";
+    const source = `tool:${value.call_id || name}`;
+    if (value.status === "error") {
+      const detail = truncatePreview(value.result) || "调用失败";
+      return [{ level: "tool", text: `${name} 失败：${detail}`, source }];
+    }
+    if (value.status === "completed") {
+      const detail = truncatePreview(value.result);
+      return [{ level: "tool", text: detail ? `${name} 完成\n${detail}` : `${name} 完成`, source }];
+    }
+    const args = truncatePreview(value.args, 400);
+    return [{ level: "tool", text: args ? `调用 ${name}\n${args}` : `调用 ${name}`, source }];
+  }
+
+  if (value.type === "task" && typeof value.text === "string" && value.text) {
+    return [{ level: "tool", text: value.text, source: `task:${value.status || "update"}` }];
+  }
+
+  if (value.type === "status") {
+    const status = String(value.status || "").toUpperCase();
+    if (status === "ERROR" || status === "CANCELLED" || status === "EXPIRED") {
+      const detail = typeof value.message === "string" ? value.message : "";
+      return [{ level: "error", text: detail || `Run 状态：${status}` }];
+    }
+    return [];
+  }
+
+  if (value.type === "system" && Array.isArray(value.tools)) {
+    const tools = value.tools.filter(Boolean);
+    if (tools.length) {
+      return [{ level: "status", text: `可用工具：${tools.join("、")}` }];
+    }
+  }
+
+  return [];
+}
+
+function toJobUsage(usage: TokenUsage | undefined): JobTokenUsage | undefined {
+  if (!usage) return undefined;
+  return {
+    inputTokens: usage.inputTokens ?? 0,
+    outputTokens: usage.outputTokens ?? 0,
+    cacheReadTokens: usage.cacheReadTokens ?? 0,
+    cacheWriteTokens: usage.cacheWriteTokens ?? 0,
+    totalTokens: usage.totalTokens ?? 0,
+    reasoningTokens: usage.reasoningTokens,
+  };
+}
+
+function formatUsageLabel(usage: JobTokenUsage | undefined): string {
+  if (!usage) return "";
+  const parts = [`输入 ${usage.inputTokens}`, `输出 ${usage.outputTokens}`, `合计 ${usage.totalTokens}`];
+  if (usage.reasoningTokens) parts.push(`思考 ${usage.reasoningTokens}`);
+  return parts.join(" · ");
+}
+
+async function readTurnUsage(agent: DisposableAgent, fallback?: JobTokenUsage): Promise<JobTokenUsage | undefined> {
+  if (!agent.getUsage) return fallback;
+  try {
+    const billed = await agent.getUsage();
+    return toJobUsage(billed.usage) ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function resolveTurnRunOptions(job: JobRecord, turn: JobTurn): AgentRunOptions {
+  return {
+    loadLocalSettings: turn.loadLocalSettings ?? job.loadLocalSettings ?? true,
+    sandbox: turn.sandbox ?? job.sandbox ?? config.cursorSandbox,
+    autoReview: turn.autoReview ?? job.autoReview ?? config.cursorAutoReview,
+    disallowedTools: turn.disallowedTools ?? job.disallowedTools ?? [],
+    extraProjects: job.extraProjects ?? [],
+  };
+}
+
+function buildAgentCreateOptions(
+  job: JobRecord,
+  turn: JobTurn,
+  model: ModelSelection,
+  mode: AgentModeOption,
+): AgentOptions {
+  const runOptions = resolveTurnRunOptions(job, turn);
+  const extraDirs = extraWorkspacePaths(runOptions.extraProjects);
+  const disallowedTools = mergeDisallowedTools(runOptions.disallowedTools);
+
+  return {
+    apiKey: requireCursorApiKey(),
+    model,
+    mode,
+    ...(disallowedTools ? { disallowedTools } : {}),
+    local: {
+      cwd: job.project.path,
+      ...(extraDirs.length ? { dirs: extraDirs } : {}),
+      settingSources: settingSourcesForRun(runOptions.loadLocalSettings),
+      ...(runOptions.sandbox ? { sandboxOptions: { enabled: true } } : {}),
+      ...(runOptions.autoReview ? { autoReview: true } : {}),
+    },
+  };
 }
 
 function hasAssistantLogs(job: JobRecord, turnId: string): boolean {
@@ -87,27 +226,18 @@ function runSettingsLabel(mode: AgentModeOption, modelLabel: string): string {
 }
 
 async function createAgentForJob(job: JobRecord, turn: JobTurn): Promise<DisposableAgent> {
-  const apiKey = requireCursorApiKey();
   const selection = await resolveModelSelection(turn.model ?? job.model);
   const model = toSdkModel(selection);
   const mode = resolveTurnMode(job, turn);
   const modelLabel = formatModelSelection(selection);
+  const options = buildAgentCreateOptions(job, turn, model, mode);
 
   if (job.agentId) {
     appendJobLog(job.id, "info", `继续已有 Agent：${job.agentId}（${runSettingsLabel(mode, modelLabel)}）`, turn.id);
-    return (await Agent.resume(job.agentId, {
-      apiKey,
-      model,
-      local: { cwd: job.project.path },
-    })) as DisposableAgent;
+    return (await Agent.resume(job.agentId, options)) as DisposableAgent;
   }
 
-  return (await Agent.create({
-    apiKey,
-    model,
-    mode,
-    local: { cwd: job.project.path },
-  })) as DisposableAgent;
+  return (await Agent.create(options)) as DisposableAgent;
 }
 
 async function disposeAgent(agent: DisposableAgent): Promise<void> {
@@ -251,13 +381,30 @@ export async function runJobTurn(jobId: string, turnId: string): Promise<void> {
     const mode = resolveTurnMode(job, turn);
     const selection = await resolveModelSelection(turn.model ?? job.model);
     const modelLabel = formatModelSelection(selection);
-    appendJobLog(job.id, "info", `开始在项目 ${job.project.name} 中执行（${runSettingsLabel(mode, modelLabel)}）。`, turn.id);
+    const runOptions = resolveTurnRunOptions(job, turn);
+    const extraLabels = [
+      runOptions.extraProjects.length ? `附加 ${runOptions.extraProjects.length} 个工作区` : "",
+      runOptions.sandbox ? "沙箱" : "",
+      runOptions.autoReview ? "Auto-review" : "",
+      runOptions.loadLocalSettings ? "已加载本机规则/MCP" : "未加载本机规则",
+      runOptions.disallowedTools.length ? `禁用 ${runOptions.disallowedTools.join(", ")}` : "",
+    ].filter(Boolean);
+    const optionSuffix = extraLabels.length ? `；${extraLabels.join("，")}` : "";
+    appendJobLog(
+      job.id,
+      "info",
+      `开始在项目 ${job.project.name} 中执行（${runSettingsLabel(mode, modelLabel)}${optionSuffix}）。`,
+      turn.id,
+    );
 
     agent = await createAgentForJob(job, turn);
     updateJob(job.id, { agentId: agent.agentId, activeTurnId: turn.id, model: selection });
     if (isTurnCancelled(job.id, turn.id)) return;
 
-    const run = await agent.send(turn.prompt, {
+    const images = await loadJobImagesForSdk(job.id, turn.images);
+    const prompt = turn.prompt.trim() || (images.length ? "请查看附图。" : "");
+    const message: string | SDKUserMessage = images.length ? { text: prompt, images } : prompt;
+    const run = await agent.send(message, {
       mode,
       model: toSdkModel(selection),
       ...(turn.delivery === "interrupt" ? { local: { force: true } } : {}),
@@ -266,13 +413,20 @@ export async function runJobTurn(jobId: string, turnId: string): Promise<void> {
     updateJob(job.id, { runId: run.id });
     appendJobLog(job.id, "info", `Run 已启动：${run.id ?? "unknown"}`, turn.id);
 
+    let streamedUsage: JobTokenUsage | undefined;
     if (run.stream) {
       for await (const event of run.stream()) {
         if (isTurnCancelled(job.id, turn.id)) break;
 
-        const chunk = extractStreamText(event);
-        if (!chunk) continue;
-        appendJobLog(job.id, chunk.level, chunk.text, turn.id);
+        const payload = unwrapSdkMessage(event) as { type?: string; usage?: TokenUsage };
+        if (payload.type === "usage" && payload.usage) {
+          streamedUsage = toJobUsage(payload.usage) ?? streamedUsage;
+          continue;
+        }
+
+        for (const chunk of extractStreamLogs(event)) {
+          appendJobLog(job.id, chunk.level, chunk.text, turn.id, chunk.source);
+        }
       }
     }
 
@@ -299,12 +453,16 @@ export async function runJobTurn(jobId: string, turnId: string): Promise<void> {
       }
     }
 
+    const usage = await readTurnUsage(agent, toJobUsage(result.usage) ?? streamedUsage);
     updateTurn(job.id, turn.id, {
       status: "finished",
       finishedAt: new Date().toISOString(),
       result: typeof result.result === "string" ? result.result : undefined,
+      usage,
     });
-    appendJobLog(job.id, "info", "本轮指令已完成。", turn.id);
+    if (usage) updateJob(job.id, { usage });
+    const usageLabel = formatUsageLabel(usage);
+    appendJobLog(job.id, "info", usageLabel ? `本轮指令已完成（${usageLabel}）。` : "本轮指令已完成。", turn.id);
   } catch (error) {
     if (isTurnCancelled(job.id, turn.id)) {
       appendJobLog(job.id, "info", "当前轮次已停止。", turn.id);

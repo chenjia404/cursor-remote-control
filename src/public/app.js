@@ -7,7 +7,7 @@ import {
   setLocale,
   t,
   translateApiError,
-} from "./i18n.js?v=0.2.24";
+} from "./i18n.js?v=0.2.25";
 
 let markedRef = null;
 let purifyRef = null;
@@ -84,6 +84,9 @@ const FALLBACK_MODELS = [
 
 const MODE_STORAGE_KEY = "cursor-rc-mode";
 const MODEL_STORAGE_KEY = "cursor-rc-model";
+const AGENT_OPTIONS_KEY = "cursor-rc-agent-options";
+const MAX_ATTACH_IMAGES = 4;
+const DISALLOWABLE_TOOLS = ["shell", "mcp", "webSearch", "webFetch", "generateImage", "task", "delete", "edit"];
 const PROJECT_STORAGE_KEY = "cursor-rc-project";
 const TAB_STORAGE_KEY = "cursor-rc-tab";
 const HISTORY_FILTER_KEY = "cursor-rc-history-filter";
@@ -120,6 +123,14 @@ const state = {
   },
   models: [],
   defaultModel: null,
+  extraProjectIds: [],
+  newTaskImages: [],
+  followUpImages: [],
+  agentOptionDefaults: {
+    sandbox: false,
+    autoReview: false,
+    disallowedTools: [],
+  },
 };
 
 initLocale();
@@ -159,6 +170,9 @@ function applyLocale(locale) {
   updateNewTaskProjectLabel();
   renderModelSettings("submit");
   renderModelSettings("followUp");
+  renderExtraWorkspaces();
+  renderDisallowedTools("submit", collectDisallowedTools("submit"));
+  renderDisallowedTools("followUp", collectDisallowedTools("followUp"));
   syncModeSegmentFromSelect();
   updateFilterChips();
   updateOnboardingVisibility();
@@ -180,6 +194,221 @@ function saveMode(mode) {
   } catch {
     // localStorage 不可用时忽略
   }
+}
+
+function applySessionAgentDefaults(session) {
+  const defaults = session?.agentOptions;
+  if (defaults && typeof defaults === "object") {
+    state.agentOptionDefaults = {
+      sandbox: Boolean(defaults.sandbox),
+      autoReview: Boolean(defaults.autoReview),
+      disallowedTools: Array.isArray(defaults.disallowedTools) ? defaults.disallowedTools : [],
+    };
+  }
+  applyAgentOptions("submit", loadSavedAgentOptions());
+  applyAgentOptions("followUp", loadSavedAgentOptions());
+}
+
+function defaultAgentOptions() {
+  return {
+    loadLocalSettings: true,
+    sandbox: Boolean(state.agentOptionDefaults.sandbox),
+    autoReview: Boolean(state.agentOptionDefaults.autoReview),
+    disallowedTools: [...(state.agentOptionDefaults.disallowedTools || [])],
+    extraProjectIds: [...state.extraProjectIds],
+  };
+}
+
+function loadSavedAgentOptions() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(AGENT_OPTIONS_KEY) || "null");
+    if (!saved || typeof saved !== "object") return defaultAgentOptions();
+    return {
+      loadLocalSettings: saved.loadLocalSettings !== false,
+      sandbox: Boolean(saved.sandbox),
+      autoReview: Boolean(saved.autoReview),
+      disallowedTools: Array.isArray(saved.disallowedTools)
+        ? saved.disallowedTools.filter((item) => DISALLOWABLE_TOOLS.includes(item))
+        : [],
+      extraProjectIds: Array.isArray(saved.extraProjectIds) ? saved.extraProjectIds : [],
+    };
+  } catch {
+    return defaultAgentOptions();
+  }
+}
+
+function saveAgentOptions(options) {
+  try {
+    localStorage.setItem(AGENT_OPTIONS_KEY, JSON.stringify(options));
+  } catch {
+    // ignore
+  }
+}
+
+function toolToggleSelector(kind) {
+  return kind === "followUp" ? "#followUpDisallowedTools" : "#disallowedTools";
+}
+
+function renderDisallowedTools(kind, selected = []) {
+  const root = $(toolToggleSelector(kind));
+  if (!root) return;
+  const chosen = new Set(selected);
+  root.innerHTML = DISALLOWABLE_TOOLS.map((tool) => {
+    const active = chosen.has(tool) ? " active" : "";
+    return `<button type="button" class="option-chip${active}" data-tool="${escapeHtml(tool)}">${escapeHtml(t(`tool.${tool}`))}</button>`;
+  }).join("");
+}
+
+function collectDisallowedTools(kind) {
+  return [...document.querySelectorAll(`${toolToggleSelector(kind)} .option-chip.active`)].map(
+    (button) => button.dataset.tool,
+  );
+}
+
+function renderExtraWorkspaces() {
+  const root = $("#extraWorkspaceList");
+  if (!root) return;
+  const others = state.projects.filter((project) => project.id !== state.selectedProjectId);
+  if (others.length === 0) {
+    root.innerHTML = `<p class="hint">${escapeHtml(t("submit.extraWorkspacesEmpty"))}</p>`;
+    return;
+  }
+
+  const selected = new Set(state.extraProjectIds);
+  root.innerHTML = `<span class="sheet-label">${escapeHtml(t("submit.extraWorkspaces"))}</span>${others
+    .map((project) => {
+      const active = selected.has(project.id) ? " active" : "";
+      return `<button type="button" class="option-chip${active}" data-extra-project="${escapeHtml(project.id)}">${escapeHtml(project.name)}</button>`;
+    })
+    .join("")}`;
+}
+
+function collectAgentOptions(kind) {
+  const prefix = kind === "followUp" ? "followUp" : "";
+  const loadToggle = $(prefix ? "#followUpLoadLocalSettingsToggle" : "#loadLocalSettingsToggle");
+  const sandboxToggle = $(prefix ? "#followUpSandboxToggle" : "#sandboxToggle");
+  const autoReviewToggle = $(prefix ? "#followUpAutoReviewToggle" : "#autoReviewToggle");
+  return {
+    loadLocalSettings: Boolean(loadToggle?.checked),
+    sandbox: Boolean(sandboxToggle?.checked),
+    autoReview: Boolean(autoReviewToggle?.checked),
+    disallowedTools: collectDisallowedTools(kind),
+    extraProjectIds: kind === "followUp" ? [] : [...state.extraProjectIds],
+  };
+}
+
+function applyAgentOptions(kind, options) {
+  const prefix = kind === "followUp" ? "followUp" : "";
+  const loadToggle = $(prefix ? "#followUpLoadLocalSettingsToggle" : "#loadLocalSettingsToggle");
+  const sandboxToggle = $(prefix ? "#followUpSandboxToggle" : "#sandboxToggle");
+  const autoReviewToggle = $(prefix ? "#followUpAutoReviewToggle" : "#autoReviewToggle");
+  if (loadToggle) loadToggle.checked = options.loadLocalSettings !== false;
+  if (sandboxToggle) sandboxToggle.checked = Boolean(options.sandbox);
+  if (autoReviewToggle) autoReviewToggle.checked = Boolean(options.autoReview);
+  renderDisallowedTools(kind, options.disallowedTools || []);
+  if (kind !== "followUp") {
+    state.extraProjectIds = (options.extraProjectIds || []).filter((id) => id !== state.selectedProjectId);
+    renderExtraWorkspaces();
+  }
+}
+
+function imageStateKey(kind) {
+  return kind === "followUp" ? "followUpImages" : "newTaskImages";
+}
+
+function revokeImagePreviews(kind) {
+  for (const item of state[imageStateKey(kind)]) {
+    if (item.previewUrl) URL.revokeObjectURL(item.previewUrl);
+  }
+  state[imageStateKey(kind)] = [];
+}
+
+function renderImagePreviews(kind) {
+  const root = $(kind === "followUp" ? "#followUpImagePreviews" : "#newTaskImagePreviews");
+  if (!root) return;
+  const items = state[imageStateKey(kind)];
+  root.innerHTML = items
+    .map(
+      (item) => `
+        <div class="image-preview">
+          <img src="${escapeHtml(item.previewUrl)}" alt="" />
+          <button type="button" data-remove-image="${escapeHtml(item.id)}" aria-label="remove">×</button>
+        </div>
+      `,
+    )
+    .join("");
+}
+
+async function fileToImagePayload(file) {
+  if (file.size > 12 * 1024 * 1024) throw new Error(t("toast.imageTooLarge"));
+
+  const blobToDataUrl = (blob) =>
+    new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result || ""));
+      reader.onerror = () => reject(new Error(t("toast.imageUnsupported")));
+      reader.readAsDataURL(blob);
+    });
+
+  try {
+    const bitmap = await createImageBitmap(file);
+    const maxDim = 1920;
+    const scale = Math.min(1, maxDim / Math.max(bitmap.width, bitmap.height));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.round(bitmap.width * scale));
+    canvas.height = Math.max(1, Math.round(bitmap.height * scale));
+    const ctx = canvas.getContext("2d");
+    ctx.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    const blob = await new Promise((resolve) => canvas.toBlob(resolve, "image/jpeg", 0.85));
+    if (!blob) throw new Error(t("toast.imageUnsupported"));
+    if (blob.size > 4 * 1024 * 1024) throw new Error(t("toast.imageTooLarge"));
+    const dataUrl = await blobToDataUrl(blob);
+    return { mimeType: "image/jpeg", data: dataUrl };
+  } catch (error) {
+    if (file.size > 4 * 1024 * 1024) throw error instanceof Error ? error : new Error(t("toast.imageTooLarge"));
+    const dataUrl = await blobToDataUrl(file);
+    return { mimeType: file.type || "image/jpeg", data: dataUrl };
+  }
+}
+
+async function addImageFiles(kind, fileList) {
+  const files = [...(fileList || [])].filter((file) => file.type.startsWith("image/"));
+  if (!files.length) {
+    showToast(t("toast.imageUnsupported"));
+    return;
+  }
+
+  const current = state[imageStateKey(kind)];
+  if (current.length + files.length > MAX_ATTACH_IMAGES) {
+    showToast(t("toast.imageTooMany"));
+    return;
+  }
+
+  for (const file of files) {
+    current.push({
+      id: crypto.randomUUID(),
+      file,
+      previewUrl: URL.createObjectURL(file),
+    });
+  }
+  renderImagePreviews(kind);
+}
+
+async function collectImagePayloads(kind) {
+  const items = state[imageStateKey(kind)];
+  const payloads = [];
+  for (const item of items) {
+    payloads.push(await fileToImagePayload(item.file));
+  }
+  return payloads;
+}
+
+function formatUsage(usage) {
+  if (!usage) return "";
+  const total = usage.totalTokens ?? 0;
+  const input = usage.inputTokens ?? 0;
+  const output = usage.outputTokens ?? 0;
+  return `${t("session.usage")} ${total} (${input} / ${output})`;
 }
 
 function loadSavedTab() {
@@ -705,6 +934,7 @@ function updateNewTaskProjectLabel() {
   if (label) label.textContent = projectName;
   const current = $("#projectCurrentName");
   if (current) current.textContent = projectName;
+  renderExtraWorkspaces();
 }
 
 function selectProjectById(projectId) {
@@ -1241,6 +1471,14 @@ function updateFollowUpComposer(job) {
     followUpBoundJobId = job.id;
     setModeSelect(modeSelect, job.mode || loadSavedMode());
     applyModelSelection("followUp", job.model || loadSavedModel());
+    applyAgentOptions("followUp", {
+      loadLocalSettings: job.loadLocalSettings !== false,
+      sandbox: Boolean(job.sandbox),
+      autoReview: Boolean(job.autoReview),
+      disallowedTools: job.disallowedTools || [],
+    });
+    revokeImagePreviews("followUp");
+    renderImagePreviews("followUp");
   }
 
   const draft = state.followUpDrafts.get(job.id) || "";
@@ -1313,6 +1551,8 @@ function buildChatMessages(job) {
       role: "user",
       time: turn.createdAt,
       text: turn.prompt,
+      images: turn.images || [],
+      jobId: job.id,
     });
 
     let sawAssistant = false;
@@ -1330,6 +1570,25 @@ function buildChatMessages(job) {
       if (log.level === "assistant") {
         sawAssistant = true;
         appendChatMessage(messages, "assistant", log.message, log.time);
+        continue;
+      }
+
+      if (log.level === "tool") {
+        messages.push({
+          role: "tool",
+          time: log.time,
+          text: log.message,
+        });
+        continue;
+      }
+
+      if (log.level === "status") {
+        messages.push({
+          role: "system",
+          level: "status",
+          time: log.time,
+          text: log.message,
+        });
         continue;
       }
 
@@ -1405,8 +1664,29 @@ function renderChatMessages(job) {
         `;
       }
 
+      if (message.role === "tool") {
+        const [title, ...rest] = String(message.text || "").split("\n");
+        return `
+          <div class="chat-row chat-left">
+            <details class="chat-tool">
+              <summary>
+                <span>${escapeHtml(title || t("session.tool"))}</span>
+                <time>${escapeHtml(time)}</time>
+              </summary>
+              ${rest.length ? `<div class="chat-text">${escapeHtml(rest.join("\n"))}</div>` : ""}
+            </details>
+          </div>
+        `;
+      }
+
       const side = message.role === "user" ? "right" : "left";
       const label = message.role === "user" ? t("session.me") : t("session.ai");
+      const images = (message.images || [])
+        .map(
+          (image) =>
+            `<a href="/api/jobs/${escapeHtml(message.jobId)}/images/${escapeHtml(image.id)}" target="_blank" rel="noopener"><img src="/api/jobs/${escapeHtml(message.jobId)}/images/${escapeHtml(image.id)}" alt="" /></a>`,
+        )
+        .join("");
       return `
         <div class="chat-row chat-${side}">
           <div class="chat-bubble chat-bubble-${message.role}">
@@ -1414,7 +1694,8 @@ function renderChatMessages(job) {
               <span>${escapeHtml(label)}</span>
               <time>${escapeHtml(time)}</time>
             </div>
-            ${formatChatBody(message.role, message.text)}
+            ${images ? `<div class="chat-images">${images}</div>` : ""}
+            ${message.text?.trim() ? formatChatBody(message.role, message.text) : ""}
           </div>
         </div>
       `;
@@ -1454,12 +1735,19 @@ function renderCurrentJob(job) {
   summary?.classList.remove("hidden");
   chat?.classList.remove("hidden");
 
+  const extraNames = (job.extraProjects || []).map((item) => item.name).filter(Boolean);
+  const extraLabel = extraNames.length ? `<p class="meta">${escapeHtml(t("session.extraWorkspaces", { names: extraNames.join("、") }))}</p>` : "";
+  const usageLabel = formatUsage(job.usage);
   summary.innerHTML = `
     <strong>${escapeHtml(job.project.name)}</strong>
     <span class="status status-${job.status}">${statusText(job.status)}</span>
     ${modeBadge(job.mode)}
     ${formatModelBadge(job.model)}
+    ${job.sandbox ? `<span class="mode-badge">${escapeHtml(t("submit.sandbox"))}</span>` : ""}
+    ${job.autoReview ? `<span class="mode-badge">${escapeHtml(t("submit.autoReview"))}</span>` : ""}
     <p class="meta">${escapeHtml(job.promptSummary)}</p>
+    ${extraLabel}
+    ${usageLabel ? `<p class="usage-meta">${escapeHtml(usageLabel)}</p>` : ""}
   `;
   renderChatMessages(job);
   updateFollowUpComposer(job);
@@ -1500,19 +1788,44 @@ async function submitFollowUp(prompt, jobId, delivery = "queue") {
     return;
   }
 
+  const images = await collectImagePayloads("followUp");
+  if (!prompt && images.length === 0) {
+    showToast(t("toast.enterFollowUp"));
+    return;
+  }
+
   const mode = getModeFromSelect($("#followUpModeSelect"));
   const model = collectModelSelection("followUp");
+  const agentOptions = collectAgentOptions("followUp");
   saveMode(mode);
   saveModelSelection(model);
+  const saved = loadSavedAgentOptions();
+  saveAgentOptions({
+    ...saved,
+    ...agentOptions,
+    extraProjectIds: saved.extraProjectIds,
+  });
 
   const { job: updated } = await api(`/api/jobs/${job.id}/messages`, {
     method: "POST",
-    body: JSON.stringify({ prompt, mode, model, delivery }),
+    body: JSON.stringify({
+      prompt,
+      mode,
+      model,
+      delivery,
+      images,
+      loadLocalSettings: agentOptions.loadLocalSettings,
+      sandbox: agentOptions.sandbox,
+      autoReview: agentOptions.autoReview,
+      disallowedTools: agentOptions.disallowedTools,
+    }),
   });
 
   state.followUpDrafts.delete(job.id);
   state.currentJobId = updated.id;
   state.chatPinnedToBottom = true;
+  revokeImagePreviews("followUp");
+  renderImagePreviews("followUp");
   renderCurrentJob(updated);
   $("#followUpInput").value = "";
   await refreshData();
@@ -1581,34 +1894,54 @@ function openNewTaskSheet() {
   updateNewTaskProjectLabel();
   setModeSelect($("#modeSelect"), loadSavedMode());
   applyModelSelection("submit", loadSavedModel());
+  applyAgentOptions("submit", loadSavedAgentOptions());
+  revokeImagePreviews("submit");
+  renderImagePreviews("submit");
   openSheet("newTaskSheet");
   window.setTimeout(() => $("#promptInput")?.focus(), 120);
 }
 
 async function submitNewJob() {
-  const prompt = $("#promptInput").value.trim();
-  const projectId = state.selectedProjectId;
+  const button = $("#submitJobButton");
+  if (button?.disabled) return;
+  if (button) button.disabled = true;
 
-  if (!projectId) {
-    showToast(t("toast.selectProject"));
-    switchTab("projects");
-    return;
-  }
-  if (!prompt) {
-    showToast(t("toast.enterPrompt"));
-    return;
-  }
-
-  $("#submitJobButton").disabled = true;
   try {
+    const prompt = $("#promptInput").value.trim();
+    const projectId = state.selectedProjectId;
+    if (!projectId) {
+      showToast(t("toast.selectProject"));
+      switchTab("projects");
+      return;
+    }
+
+    const images = await collectImagePayloads("submit");
+    if (!prompt && images.length === 0) {
+      showToast(t("toast.enterPrompt"));
+      return;
+    }
+
     const mode = getModeFromSelect($("#modeSelect"));
     const model = collectModelSelection("submit");
+    const agentOptions = collectAgentOptions("submit");
     saveMode(mode);
     saveModelSelection(model);
+    saveAgentOptions(agentOptions);
 
     const { job } = await api("/api/jobs", {
       method: "POST",
-      body: JSON.stringify({ projectId, prompt, mode, model }),
+      body: JSON.stringify({
+        projectId,
+        prompt,
+        mode,
+        model,
+        images,
+        extraProjectIds: agentOptions.extraProjectIds,
+        loadLocalSettings: agentOptions.loadLocalSettings,
+        sandbox: agentOptions.sandbox,
+        autoReview: agentOptions.autoReview,
+        disallowedTools: agentOptions.disallowedTools,
+      }),
     });
     state.currentJobId = job.id;
     state.chatPinnedToBottom = true;
@@ -1616,12 +1949,14 @@ async function submitNewJob() {
     switchTab("session");
     renderCurrentJob(job);
     $("#promptInput").value = "";
+    revokeImagePreviews("submit");
+    renderImagePreviews("submit");
     await refreshData();
     startPollingCurrentJob();
   } catch (error) {
     showToast(error.message);
   } finally {
-    $("#submitJobButton").disabled = false;
+    if (button) button.disabled = false;
   }
 }
 
@@ -1636,6 +1971,7 @@ async function bootstrap() {
   try {
     const session = await api("/api/session");
     state.csrfToken = session.csrfToken;
+    applySessionAgentDefaults(session);
     setLoggedIn(true);
     await refreshData();
   } catch {
@@ -1663,6 +1999,7 @@ export async function onBootAuthenticated(session) {
 
   stripCredentialsFromUrl();
   setLoggedIn(true);
+  applySessionAgentDefaults(session);
   state.selectedProjectId = loadSavedProjectId();
   state.historyFilter = loadHistoryFilter();
   state.archivedJobIds = loadArchivedJobIds();
@@ -1771,6 +2108,64 @@ on("#browseList", "click", async (event) => {
   await loadBrowse(item.dataset.browsePath);
 });
 
+on("#extraWorkspaceList", "click", (event) => {
+  const chip = event.target.closest("[data-extra-project]");
+  if (!chip) return;
+  const projectId = chip.dataset.extraProject;
+  const selected = new Set(state.extraProjectIds);
+  if (selected.has(projectId)) selected.delete(projectId);
+  else selected.add(projectId);
+  state.extraProjectIds = [...selected];
+  renderExtraWorkspaces();
+});
+
+on("#disallowedTools", "click", (event) => {
+  const chip = event.target.closest("[data-tool]");
+  if (!chip) return;
+  chip.classList.toggle("active");
+});
+
+on("#followUpDisallowedTools", "click", (event) => {
+  const chip = event.target.closest("[data-tool]");
+  if (!chip) return;
+  chip.classList.toggle("active");
+});
+
+on("#newTaskImageButton", "click", () => $("#newTaskImageInput")?.click());
+on("#followUpImageButton", "click", () => $("#followUpImageInput")?.click());
+
+on("#newTaskImageInput", "change", (event) => {
+  addImageFiles("submit", event.currentTarget.files).catch((error) => showToast(error.message));
+  event.currentTarget.value = "";
+});
+
+on("#followUpImageInput", "change", (event) => {
+  addImageFiles("followUp", event.currentTarget.files).catch((error) => showToast(error.message));
+  event.currentTarget.value = "";
+});
+
+on("#newTaskImagePreviews", "click", (event) => {
+  const button = event.target.closest("[data-remove-image]");
+  if (!button) return;
+  const id = button.dataset.removeImage;
+  const next = state.newTaskImages.filter((item) => item.id !== id);
+  const removed = state.newTaskImages.find((item) => item.id === id);
+  if (removed?.previewUrl) URL.revokeObjectURL(removed.previewUrl);
+  state.newTaskImages = next;
+  renderImagePreviews("submit");
+});
+
+on("#followUpImagePreviews", "click", (event) => {
+  const button = event.target.closest("[data-remove-image]");
+  if (!button) return;
+  const id = button.dataset.removeImage;
+  const next = state.followUpImages.filter((item) => item.id !== id);
+  const removed = state.followUpImages.find((item) => item.id === id);
+  if (removed?.previewUrl) URL.revokeObjectURL(removed.previewUrl);
+  state.followUpImages = next;
+  renderImagePreviews("followUp");
+});
+
 on("#submitJobButton", "click", () => {
   submitNewJob().catch((error) => showToast(error.message));
 });
@@ -1802,7 +2197,7 @@ on("#bottomNav", "click", (event) => {
 on("#followUpForm", "submit", async (event) => {
   event.preventDefault();
   const prompt = $("#followUpInput")?.value.trim();
-  if (!prompt) {
+  if (!prompt && state.followUpImages.length === 0) {
     showToast(t("toast.enterFollowUp"));
     return;
   }
@@ -1822,7 +2217,7 @@ on("#followUpForm", "submit", async (event) => {
 
 on("#followUpInterruptButton", "click", async () => {
   const prompt = $("#followUpInput")?.value.trim();
-  if (!prompt) {
+  if (!prompt && state.followUpImages.length === 0) {
     showToast(t("toast.enterFollowUp"));
     return;
   }
@@ -2062,6 +2457,8 @@ updateInstallButtonVisibility();
 setModeSelect($("#modeSelect"), loadSavedMode());
 bindModelSettings("submit");
 bindModelSettings("followUp");
+applyAgentOptions("submit", loadSavedAgentOptions());
+applyAgentOptions("followUp", loadSavedAgentOptions());
 applyModels(FALLBACK_MODELS, { id: "default" });
 state.historyFilter = loadHistoryFilter();
 state.archivedJobIds = loadArchivedJobIds();

@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import dotenv from "dotenv";
 import { z } from "zod";
+import type { SettingSource, ToolName } from "@cursor/sdk";
 
 dotenv.config();
 
@@ -26,6 +27,16 @@ const envSchema = z.object({
   CURSOR_API_KEY: z.string().min(1).optional(),
   CURSOR_MODEL: z.string().default("auto"),
   CURSOR_DEFAULT_MODE: z.enum(["agent", "plan"]).default("agent"),
+  CURSOR_SETTING_SOURCES: z.string().default("project,user,plugins"),
+  CURSOR_SANDBOX: z
+    .string()
+    .optional()
+    .transform((value) => value === "true"),
+  CURSOR_AUTO_REVIEW: z
+    .string()
+    .optional()
+    .transform((value) => value === "true"),
+  CURSOR_DISALLOWED_TOOLS: z.string().optional().default(""),
   ADMIN_USERNAME: z.string().default("admin"),
   ADMIN_PASSWORD_HASH: z.string().optional(),
   SESSION_SECRET: z.string().optional(),
@@ -46,6 +57,48 @@ const env = envSchema.parse(process.env);
 
 function resolveFromRoot(value: string): string {
   return path.isAbsolute(value) ? value : path.resolve(appRoot, value);
+}
+
+const SETTING_SOURCE_VALUES = new Set<SettingSource>(["project", "user", "team", "mdm", "plugins", "all"]);
+const KNOWN_TOOL_VALUES = new Set<string>([
+  "shell",
+  "read",
+  "edit",
+  "grep",
+  "glob",
+  "ls",
+  "task",
+  "mcp",
+  "webSearch",
+  "delete",
+  "readLints",
+  "webFetch",
+  "semSearch",
+  "updateTodos",
+  "readTodos",
+  "askQuestion",
+  "await",
+  "generateImage",
+  "applyAgentDiff",
+]);
+
+function parseSettingSources(raw: string): SettingSource[] {
+  const items = raw
+    .split(/[,;]/)
+    .map((item) => item.trim().toLowerCase())
+    .filter(Boolean);
+  if (items.includes("all")) return ["all"];
+  const next = items.filter((item): item is SettingSource => SETTING_SOURCE_VALUES.has(item as SettingSource));
+  return next.length ? [...new Set(next)] : ["project", "user", "plugins"];
+}
+
+function parseToolNames(raw: string): ToolName[] {
+  const next: ToolName[] = [];
+  for (const item of raw.split(/[,;]/).map((value) => value.trim()).filter(Boolean)) {
+    if (!KNOWN_TOOL_VALUES.has(item)) continue;
+    if (!next.includes(item as ToolName)) next.push(item as ToolName);
+  }
+  return next;
 }
 
 function publicBaseUrlIsHttps(publicBaseUrl: string): boolean {
@@ -77,6 +130,10 @@ export const config = {
   cursorApiKey: env.CURSOR_API_KEY,
   cursorModel: env.CURSOR_MODEL,
   cursorDefaultMode: env.CURSOR_DEFAULT_MODE,
+  cursorSettingSources: parseSettingSources(env.CURSOR_SETTING_SOURCES),
+  cursorSandbox: env.CURSOR_SANDBOX,
+  cursorAutoReview: env.CURSOR_AUTO_REVIEW,
+  cursorDisallowedTools: parseToolNames(env.CURSOR_DISALLOWED_TOOLS),
   adminUsername: env.ADMIN_USERNAME,
   adminPasswordHash: env.ADMIN_PASSWORD_HASH,
   sessionSecret: env.SESSION_SECRET,

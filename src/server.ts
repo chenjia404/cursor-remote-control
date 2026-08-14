@@ -6,6 +6,12 @@ import rateLimit from "@fastify/rate-limit";
 import fastifyStatic from "@fastify/static";
 import { z } from "zod";
 import {
+  publicAgentOptionDefaults,
+  resolveExtraProjects,
+  resolveRunOptions,
+  sanitizeToolNames,
+} from "./agentOptions.js";
+import {
   clearSession,
   issueSession,
   loadActiveSession,
@@ -20,7 +26,8 @@ import {
   resumeQueuedConversations,
   scheduleConversation,
 } from "./cursorAgent.js";
-import { createJob, enqueueJobTurn, getJob, listJobs, loadJobs, recoverInterruptedJobs } from "./jobs.js";
+import { createJob, enqueueJobTurn, getJob, listJobs, loadJobs, recoverInterruptedJobs, updateTurn } from "./jobs.js";
+import { readJobImage, saveJobImages } from "./jobImages.js";
 import { defaultModelSelection, listCursorModels, normalizeModelSelection, warmupModelCatalog } from "./models.js";
 import {
   browseDirectory,
@@ -50,19 +57,42 @@ const modelSelectionSchema = z.object({
     .optional(),
 });
 
+const agentRunOptionsSchema = {
+  extraProjectIds: z.array(z.string().min(1)).max(8).optional(),
+  loadLocalSettings: z.boolean().optional(),
+  sandbox: z.boolean().optional(),
+  autoReview: z.boolean().optional(),
+  disallowedTools: z.array(z.string().min(1).max(64)).max(32).optional(),
+  images: z
+    .array(
+      z.object({
+        mimeType: z.string().min(1).max(64).optional(),
+        data: z.string().min(1),
+      }),
+    )
+    .max(4)
+    .optional(),
+};
+
 const createJobSchema = z.object({
   projectId: z.string().min(1),
-  prompt: z.string().min(1).max(20000),
+  prompt: z.string().max(20000).default(""),
   parentJobId: z.string().uuid().optional(),
   mode: z.enum(["agent", "plan"]).optional(),
   model: modelSelectionSchema.optional(),
+  ...agentRunOptionsSchema,
 });
 
 const followUpSchema = z.object({
-  prompt: z.string().min(1).max(20000),
+  prompt: z.string().max(20000).default(""),
   mode: z.enum(["agent", "plan"]).optional(),
   model: modelSelectionSchema.optional(),
   delivery: z.enum(["queue", "interrupt"]).optional(),
+  loadLocalSettings: z.boolean().optional(),
+  sandbox: z.boolean().optional(),
+  autoReview: z.boolean().optional(),
+  disallowedTools: z.array(z.string().min(1).max(64)).max(32).optional(),
+  images: agentRunOptionsSchema.images,
 });
 
 const browseSchema = z.object({
@@ -75,6 +105,15 @@ const selectProjectSchema = z.object({
 
 function getRequestIp(requestIp: string | undefined): string {
   return requestIp || "unknown";
+}
+
+function requirePromptOrImages(prompt: string, images: unknown): string {
+  const text = prompt.trim();
+  const hasImages = Array.isArray(images) && images.length > 0;
+  if (!text && !hasImages) {
+    throw new Error("请输入任务指令或附加图片");
+  }
+  return text || "（附图）";
 }
 
 async function start(): Promise<void> {
@@ -93,7 +132,7 @@ async function start(): Promise<void> {
   const app = Fastify({
     logger: true,
     trustProxy: true,
-    bodyLimit: 128 * 1024,
+    bodyLimit: 32 * 1024 * 1024,
   });
 
   await app.register(cookie);
@@ -106,6 +145,7 @@ async function start(): Promise<void> {
         scriptSrc: ["'self'"],
         styleSrc: ["'self'", "'unsafe-inline'"],
         connectSrc: ["'self'"],
+        imgSrc: ["'self'", "data:", "blob:"],
       },
     },
   });
@@ -164,6 +204,7 @@ async function start(): Promise<void> {
       username: body.username,
       csrfToken: issued.csrfToken,
       sessionToken: issued.sessionToken,
+      agentOptions: publicAgentOptionDefaults(),
     };
   });
 
@@ -176,6 +217,7 @@ async function start(): Promise<void> {
     username: request.user?.username,
     csrfToken: request.csrfToken,
     version: config.appVersion,
+    agentOptions: publicAgentOptionDefaults(),
   }));
 
   app.get("/api/projects", { preHandler: requireAuth }, async () => ({
@@ -241,6 +283,20 @@ async function start(): Promise<void> {
     const catalog = await listCursorModels();
     const body = createJobSchema.parse(request.body);
     const model = normalizeModelSelection(body.model, catalog);
+    let prompt: string;
+    try {
+      prompt = requirePromptOrImages(body.prompt, body.images);
+    } catch (error) {
+      reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
+      return;
+    }
+
+    const runOptions = resolveRunOptions({
+      loadLocalSettings: body.loadLocalSettings,
+      sandbox: body.sandbox,
+      autoReview: body.autoReview,
+      disallowedTools: sanitizeToolNames(body.disallowedTools),
+    });
 
     // 提交区选择「继续已有任务」时，在同一任务内追加一轮，不新建任务
     if (body.parentJobId) {
@@ -250,13 +306,26 @@ async function start(): Promise<void> {
         return;
       }
 
-      const job = enqueueJobTurn(parent.id, {
-        prompt: body.prompt,
+      let images;
+      try {
+        images = await saveJobImages(parent.id, body.images);
+      } catch (error) {
+        reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
+        return;
+      }
+
+      const { job } = enqueueJobTurn(parent.id, {
+        prompt,
         mode: body.mode ?? parent.mode ?? config.cursorDefaultMode,
         model,
+        images,
+        loadLocalSettings: runOptions.loadLocalSettings,
+        sandbox: runOptions.sandbox,
+        autoReview: runOptions.autoReview,
+        disallowedTools: runOptions.disallowedTools,
       });
       scheduleConversation(job.id);
-      reply.code(202).send({ job });
+      reply.code(202).send({ job: getJob(job.id) ?? job });
       return;
     }
 
@@ -266,17 +335,49 @@ async function start(): Promise<void> {
       return;
     }
 
+    let extraProjects;
+    try {
+      extraProjects = await resolveExtraProjects(body.extraProjectIds, body.projectId);
+    } catch (error) {
+      reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
+      return;
+    }
+
     const job = createJob({
       project,
-      prompt: body.prompt,
+      prompt,
       submittedBy: request.user?.username ?? config.adminUsername,
       sourceIp: getRequestIp(request.ip),
       mode: body.mode ?? config.cursorDefaultMode,
       model,
+      extraProjects,
+      loadLocalSettings: runOptions.loadLocalSettings,
+      sandbox: runOptions.sandbox,
+      autoReview: runOptions.autoReview,
+      disallowedTools: runOptions.disallowedTools,
     });
 
+    try {
+      const firstTurn = job.turns[0];
+      if (!firstTurn) throw new Error("任务轮次不存在");
+      const images = await saveJobImages(job.id, body.images);
+      if (images.length) updateTurn(job.id, firstTurn.id, { images });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const firstTurn = job.turns[0];
+      if (firstTurn) {
+        updateTurn(job.id, firstTurn.id, {
+          status: "error",
+          finishedAt: new Date().toISOString(),
+          error: message,
+        });
+      }
+      reply.code(400).send({ error: message });
+      return;
+    }
+
     scheduleConversation(job.id);
-    reply.code(202).send({ job });
+    reply.code(202).send({ job: getJob(job.id) ?? job });
   });
 
   app.post("/api/jobs/:id/messages", { preHandler: requireCsrf }, async (request, reply) => {
@@ -289,13 +390,41 @@ async function start(): Promise<void> {
       return;
     }
 
+    let prompt: string;
+    try {
+      prompt = requirePromptOrImages(body.prompt, body.images);
+    } catch (error) {
+      reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
+      return;
+    }
+
+    const runOptions = resolveRunOptions({
+      loadLocalSettings: body.loadLocalSettings ?? existing.loadLocalSettings,
+      sandbox: body.sandbox ?? existing.sandbox,
+      autoReview: body.autoReview ?? existing.autoReview,
+      disallowedTools: sanitizeToolNames(body.disallowedTools ?? existing.disallowedTools),
+    });
+
+    let images;
+    try {
+      images = await saveJobImages(existing.id, body.images);
+    } catch (error) {
+      reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
+      return;
+    }
+
     const delivery = body.delivery ?? "queue";
     const wasRunning = existing.turns.some((turn) => turn.status === "running");
-    const job = enqueueJobTurn(existing.id, {
-      prompt: body.prompt,
+    const { job } = enqueueJobTurn(existing.id, {
+      prompt,
       mode: body.mode ?? existing.mode ?? config.cursorDefaultMode,
       model: normalizeModelSelection(body.model ?? existing.model, catalog),
       delivery,
+      images,
+      loadLocalSettings: runOptions.loadLocalSettings,
+      sandbox: runOptions.sandbox,
+      autoReview: runOptions.autoReview,
+      disallowedTools: runOptions.disallowedTools,
     });
 
     if (delivery === "interrupt" && wasRunning) {
@@ -310,6 +439,35 @@ async function start(): Promise<void> {
 
     scheduleConversation(job.id);
     reply.code(202).send({ job: getJob(job.id) ?? job });
+  });
+
+  app.get("/api/jobs/:id/images/:imageId", { preHandler: requireAuth }, async (request, reply) => {
+    const params = z
+      .object({
+        id: z.string().uuid(),
+        imageId: z.string().uuid(),
+      })
+      .parse(request.params);
+    const job = getJob(params.id);
+    if (!job) {
+      reply.code(404).send({ error: "任务不存在" });
+      return;
+    }
+
+    const referenced = (job.turns ?? []).some((turn) => turn.images?.some((item) => item.id === params.imageId));
+    if (!referenced) {
+      reply.code(404).send({ error: "图片不存在" });
+      return;
+    }
+
+    const image = await readJobImage(job.id, params.imageId);
+    if (!image) {
+      reply.code(404).send({ error: "图片不存在" });
+      return;
+    }
+
+    reply.header("Cache-Control", "private, max-age=86400");
+    return reply.type(image.mimeType).send(image.buffer);
   });
 
   app.post("/api/jobs/:id/cancel", { preHandler: requireCsrf }, async (request, reply) => {

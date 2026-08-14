@@ -16,6 +16,8 @@ The UI supports Chinese and English. Use the language switcher in the top-right 
 - Listens on port `20267` by default.
 - Browse directories within `PROJECT_ROOTS` and confirm projects; the dropdown only lists confirmed projects.
 - Runs Agent tasks in the project directory via Cursor SDK local mode.
+- Loads local project rules, Skills, and MCP by default. You can attach extra confirmed workspaces, restrict tools, enable sandbox / Auto-review, and send images.
+- The session view shows tool calls, token usage, thinking, and replies.
 - Persists job history, status, Agent ID, Run ID, and logs. One job is one conversation; follow-up messages stay on the same job. While a round is running, follow-ups queue by default; Append interrupts the current round and runs immediately.
 - PWA support so you can install it to the home screen from a mobile browser.
 - Chinese / English UI language switcher.
@@ -48,6 +50,8 @@ CURSOR_API_KEY=cursor_xxx
 PROJECT_ROOTS=E:\code;D:\code;C:\code
 COOKIE_SECURE=false
 ```
+
+Optional: `CURSOR_SETTING_SOURCES` (default `project,user,plugins` to load local rules / Skills / MCP), `CURSOR_SANDBOX`, `CURSOR_AUTO_REVIEW`, and `CURSOR_DISALLOWED_TOOLS`. The web UI can still override these per task.
 
 `PROJECT_ROOTS` is a semicolon-separated list of local Windows paths. Prefer project roots, not entire system drives.
 

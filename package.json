@@ -1,6 +1,6 @@
 {
   "name": "cursor-remote-control",
-  "version": "0.2.18",
+  "version": "0.2.25",
   "private": true,
   "type": "module",
   "scripts": {
