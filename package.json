@@ -22,10 +22,10 @@
     "@fastify/helmet": "latest",
     "@fastify/rate-limit": "latest",
     "@fastify/static": "latest",
-    "dompurify": "^3.4.12",
+    "dompurify": "^3.4.13",
     "dotenv": "latest",
     "fastify": "latest",
-    "marked": "^18.0.7",
+    "marked": "^18.0.9",
     "zod": "latest"
   },
   "devDependencies": {
