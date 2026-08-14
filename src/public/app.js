@@ -7,7 +7,7 @@ import {
   setLocale,
   t,
   translateApiError,
-} from "./i18n.js?v=0.2.31";
+} from "./i18n.js?v=0.2.32";
 
 let markedRef = null;
 let purifyRef = null;
@@ -103,6 +103,8 @@ const state = {
   selectedProjectId: "",
   currentJobId: "",
   currentJob: null,
+  inChat: false,
+  homeTab: "session",
   activeTab: "session",
   historyFilter: "all",
   historySearch: "",
@@ -915,6 +917,12 @@ function stripCredentialsFromUrl() {
 function setLoggedIn(loggedIn) {
   $("#loginView").classList.toggle("hidden", loggedIn);
   $("#appView").classList.toggle("hidden", !loggedIn);
+  if (!loggedIn && state.inChat) {
+    state.inChat = false;
+    state.currentJobId = "";
+    state.currentJob = null;
+    updateChatMode();
+  }
 }
 
 function findProject(projectId) {
@@ -1134,7 +1142,7 @@ function renderMarkdown(value) {
   if (!markedRef || !purifyRef) {
     ensureMarkdownLibs()
       .then(() => {
-        if (state.currentJob) renderCurrentJob(state.currentJob);
+        if (state.inChat && state.currentJob) renderCurrentJob(state.currentJob);
       })
       .catch(() => {});
     return escapeHtml(String(value || "")).replaceAll("\n", "<br>");
@@ -1231,7 +1239,7 @@ function updateComposerDock() {
   const appShell = $("#appView");
   if (!dock || !appShell) return;
 
-  const show = state.activeTab === "session" && Boolean(state.currentJob);
+  const show = state.inChat && Boolean(state.currentJob);
   dock.classList.toggle("hidden", !show);
   appShell.classList.toggle("has-composer", show);
 
@@ -1286,6 +1294,7 @@ function updateOnboardingVisibility() {
   const guide = $("#onboardingGuide");
   if (!guide) return;
   const show =
+    !state.inChat &&
     state.activeTab === "session" &&
     !state.currentJob &&
     !isOnboardingDone() &&
@@ -1400,10 +1409,93 @@ function setupPullToRefresh() {
   });
 }
 
+function rememberHomeTab() {
+  if (state.inChat) return;
+  let tab = state.activeTab;
+  if (isWideLayout() && tab === "history") tab = "session";
+  state.homeTab = tab === "history" || tab === "projects" ? tab : "session";
+}
+
+function updateChatMode() {
+  const app = $("#appView");
+  if (!app) return;
+  app.classList.toggle("in-chat", state.inChat);
+  const back = $("#chatBackButton");
+  back?.classList.toggle("hidden", !state.inChat);
+  updateLayoutState();
+  updateComposerDock();
+  updateContextHeader();
+  renderSessionSwitcher();
+  updateOnboardingVisibility();
+}
+
+let suppressChatPopstate = false;
+let suppressChatPopstateTimer = 0;
+
+function ensureChatHistoryState() {
+  try {
+    if (history.state?.crcView !== "chat") {
+      history.pushState({ crcView: "chat" }, "");
+    }
+  } catch {
+    // history 不可用时仍进入会话页
+  }
+}
+
+function enterChat() {
+  if (!state.inChat) rememberHomeTab();
+  state.inChat = true;
+  switchTab("session");
+  updateChatMode();
+  ensureChatHistoryState();
+}
+
+function leaveChat({ fromPopstate = false } = {}) {
+  if (!state.inChat) return;
+  state.inChat = false;
+  rememberFollowUpDraft();
+  state.currentJobId = "";
+  closeAllSheets();
+  $("#followUpInput")?.blur();
+  renderCurrentJob(null);
+  const homeTab = state.homeTab || "session";
+  state.homeTab = "session";
+  updateChatMode();
+  switchTab(homeTab);
+  if (!fromPopstate) {
+    try {
+      if (history.state?.crcView === "chat") {
+        suppressChatPopstate = true;
+        window.clearTimeout(suppressChatPopstateTimer);
+        suppressChatPopstateTimer = window.setTimeout(() => {
+          suppressChatPopstate = false;
+        }, 1000);
+        history.back();
+      }
+    } catch {
+      suppressChatPopstate = false;
+    }
+  }
+}
+
 function updateContextHeader(job = state.currentJob) {
   const eyebrow = $("#contextEyebrow");
   const title = $("#contextTitle");
   const status = $("#contextStatus");
+
+  if (state.inChat) {
+    eyebrow.textContent = t("nav.session");
+    if (!job) {
+      title.textContent = t("session.empty");
+      status.classList.add("hidden");
+      return;
+    }
+    title.textContent = job.project?.name || t("session.empty");
+    status.textContent = statusText(job.status);
+    status.className = `status status-${job.status}`;
+    status.classList.remove("hidden");
+    return;
+  }
 
   if (state.activeTab === "history") {
     eyebrow.textContent = t("nav.history");
@@ -1420,16 +1512,8 @@ function updateContextHeader(job = state.currentJob) {
   }
 
   eyebrow.textContent = t("nav.session");
-  if (!job) {
-    title.textContent = t("session.empty");
-    status.classList.add("hidden");
-    return;
-  }
-
-  title.textContent = job.project?.name || t("session.empty");
-  status.textContent = statusText(job.status);
-  status.className = `status status-${job.status}`;
-  status.classList.remove("hidden");
+  title.textContent = t("session.empty");
+  status.classList.add("hidden");
 }
 
 function renderJobs() {
@@ -1515,7 +1599,7 @@ function renderSessionSwitcher() {
   if (!root) return;
 
   const busyJobs = listBusyJobs();
-  const show = state.activeTab === "session" && busyJobs.length > 1;
+  const show = !state.inChat && state.activeTab === "session" && busyJobs.length > 1;
   root.hidden = !show;
   root.classList.toggle("hidden", !show);
   if (!show) {
@@ -1550,15 +1634,18 @@ function updateHistoryBadge() {
 }
 
 async function openJob(jobId) {
-  if (!jobId || jobId === state.currentJobId) {
-    switchTab("session");
+  if (!jobId) return;
+
+  rememberFollowUpDraft();
+  const sameJob = jobId === state.currentJobId && Boolean(state.currentJob);
+  state.currentJobId = jobId;
+  state.chatPinnedToBottom = true;
+  enterChat();
+  if (sameJob) {
+    renderCurrentJob(state.currentJob);
     return;
   }
 
-  rememberFollowUpDraft();
-  state.currentJobId = jobId;
-  state.chatPinnedToBottom = true;
-  switchTab("session");
   const cached = findJob(jobId);
   if (cached) renderCurrentJob(cached);
   const chatOutput = $("#chatOutput");
@@ -1870,6 +1957,7 @@ function renderChatMessages(job) {
 }
 
 function renderCurrentJob(job) {
+  if (job && !state.inChat) return;
   state.currentJob = job || null;
   const empty = $("#sessionEmpty");
   const summary = $("#currentJob");
@@ -1937,7 +2025,7 @@ function shouldKeepPolling() {
 async function refreshJobList() {
   const jobsData = await api("/api/jobs");
   replaceJobList(jobsData.jobs);
-  if (state.currentJob && state.currentJobId) {
+  if (state.inChat && state.currentJob && state.currentJobId) {
     upsertJob(state.currentJob);
   }
   renderJobs();
@@ -2014,6 +2102,13 @@ async function submitFollowUp(prompt, jobId, delivery = "queue") {
   });
 
   state.followUpDrafts.delete(job.id);
+  upsertJob(updated);
+  if (!state.inChat) {
+    renderJobs();
+    if (shouldKeepPolling()) startPollingCurrentJob();
+    return;
+  }
+
   state.currentJobId = updated.id;
   state.chatPinnedToBottom = true;
   revokeImagePreviews("followUp");
@@ -2040,11 +2135,11 @@ async function refreshData() {
 }
 
 async function refreshCurrentJob() {
-  if (!state.currentJobId) return;
+  if (!state.currentJobId || !state.inChat) return;
 
   const jobId = state.currentJobId;
   const { job } = await api(`/api/jobs/${jobId}`);
-  if (state.currentJobId !== jobId) return;
+  if (state.currentJobId !== jobId || !state.inChat) return;
   upsertJob(job);
   renderJobs();
   renderCurrentJob(job);
@@ -2072,9 +2167,13 @@ async function stopCurrentJob() {
       method: "POST",
       body: "{}",
     });
-    state.currentJobId = updatedJob.id;
-    state.currentJob = updatedJob;
-    renderCurrentJob(updatedJob);
+    upsertJob(updatedJob);
+    if (state.inChat && (!state.currentJobId || state.currentJobId === updatedJob.id || state.currentJobId === job.id)) {
+      state.currentJobId = updatedJob.id;
+      renderCurrentJob(updatedJob);
+    } else {
+      renderJobs();
+    }
     await refreshData();
     showToast(t("toast.stopRequested"));
   } catch (error) {
@@ -2142,7 +2241,7 @@ async function submitNewJob() {
     state.currentJobId = job.id;
     state.chatPinnedToBottom = true;
     closeSheet("newTaskSheet");
-    switchTab("session");
+    enterChat();
     renderCurrentJob(job);
     $("#promptInput").value = "";
     revokeImagePreviews("submit");
@@ -2378,6 +2477,17 @@ on("#submitJobButton", "click", () => {
 
 on("#headerNewTaskButton", "click", openNewTaskSheet);
 on("#sessionNewTaskButton", "click", openNewTaskSheet);
+on("#chatBackButton", "click", () => leaveChat());
+
+window.addEventListener("popstate", () => {
+  if (suppressChatPopstate) {
+    suppressChatPopstate = false;
+    window.clearTimeout(suppressChatPopstateTimer);
+    if (state.inChat) ensureChatHistoryState();
+    return;
+  }
+  if (state.inChat) leaveChat({ fromPopstate: true });
+});
 
 on("#newTaskChangeProjectButton", "click", () => {
   closeSheet("newTaskSheet");

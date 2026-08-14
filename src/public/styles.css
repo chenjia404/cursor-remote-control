@@ -153,6 +153,12 @@ button.small {
   padding: 0.45rem 0.55rem;
 }
 
+.chat-back-btn {
+  flex-shrink: 0;
+  min-width: 2.2rem;
+  padding: 0.3rem 0.35rem;
+}
+
 .danger {
   border-color: #7f1d1d;
   color: #fecaca;
@@ -189,6 +195,68 @@ button.small {
 
 .app-shell.has-composer {
   padding-bottom: calc(var(--bottom-nav-h) + var(--composer-h) + var(--safe-bottom));
+}
+
+.app-shell.in-chat {
+  padding-bottom: var(--safe-bottom);
+}
+
+.app-shell.in-chat.has-composer {
+  padding-bottom: var(--composer-h);
+}
+
+.app-shell.in-chat .bottom-nav,
+.app-shell.in-chat .session-switcher,
+.app-shell.in-chat .home-header-action,
+.app-shell.in-chat .history-aside,
+.app-shell.in-chat .session-summary-wrap,
+.app-shell.in-chat .context-eyebrow {
+  display: none !important;
+}
+
+.app-shell.in-chat .chat-back-btn {
+  display: inline-flex !important;
+}
+
+.app-shell.in-chat .context-header {
+  align-items: center;
+  min-height: 3.1rem;
+  padding: calc(0.45rem + env(safe-area-inset-top, 0px)) 0.65rem 0.45rem;
+}
+
+.app-shell.in-chat .context-main {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.app-shell.in-chat .context-meta strong {
+  font-size: 1.02rem;
+}
+
+.app-shell.in-chat .app-body {
+  display: flex;
+}
+
+.app-shell.in-chat .session-pull-zone {
+  padding: 0;
+}
+
+.app-shell.in-chat .chat {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  flex: 1 1 0;
+  min-height: 0;
+  padding: 0.75rem 0.85rem 1rem;
+}
+
+.app-shell.in-chat .follow-up-dock {
+  bottom: 0;
+  padding-bottom: calc(0.45rem + var(--safe-bottom));
+}
+
+.app-shell.in-chat .new-messages-fab {
+  bottom: 0.75rem;
 }
 
 .context-header {
@@ -1598,6 +1666,14 @@ button.small {
   z-index: 50;
 }
 
+.shell:has(#appView.in-chat) .toast {
+  bottom: calc(1rem + var(--safe-bottom));
+}
+
+.shell:has(#appView.in-chat.has-composer) .toast {
+  bottom: calc(1rem + var(--composer-h));
+}
+
 @media (min-width: 768px) {
   .shell {
     padding: 0 1rem;
@@ -1653,10 +1729,19 @@ button.small {
     min-height: 0;
   }
 
+  .app-shell.in-chat .app-body {
+    display: flex;
+    grid-template-columns: none;
+  }
+
   .history-aside {
     border-right: 1px solid rgba(148, 163, 184, 0.15);
     display: flex !important;
     max-height: none;
+  }
+
+  #appView.in-chat .history-aside {
+    display: none !important;
   }
 
   .history-panel {

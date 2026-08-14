@@ -16,6 +16,7 @@ const messages = {
     "nav.session": "会话",
     "nav.history": "历史",
     "nav.projects": "项目",
+    "nav.back": "返回",
 
     "login.title": "登录",
     "login.username": "用户名",
@@ -222,6 +223,7 @@ const messages = {
     "nav.session": "Session",
     "nav.history": "History",
     "nav.projects": "Projects",
+    "nav.back": "Back",
 
     "login.title": "Sign in",
     "login.username": "Username",
