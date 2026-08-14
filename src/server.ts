@@ -13,6 +13,7 @@ import {
 } from "./agentOptions.js";
 import {
   clearSession,
+  getRawSessionToken,
   issueSession,
   loadActiveSession,
   requireAuth,
@@ -216,6 +217,7 @@ async function start(): Promise<void> {
   app.get("/api/session", { preHandler: requireAuth }, async (request) => ({
     username: request.user?.username,
     csrfToken: request.csrfToken,
+    sessionToken: getRawSessionToken(request),
     version: config.appVersion,
     agentOptions: publicAgentOptionDefaults(),
   }));

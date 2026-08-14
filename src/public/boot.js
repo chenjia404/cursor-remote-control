@@ -4,7 +4,7 @@
 (function () {
   var SESSION_KEY = "crc_session_token";
   var CSRF_KEY = "crc_csrf_token";
-  var APP_VERSION = "0.2.30";
+  var APP_VERSION = "0.2.31";
   var csrfToken = "";
   var sessionToken = "";
   var appLoadPromise = null;
@@ -42,25 +42,56 @@
     if (button) button.disabled = Boolean(submitting);
   }
 
-  function readStoredAuth() {
+  function storageGet(key) {
     try {
-      sessionToken = sessionStorage.getItem(SESSION_KEY) || "";
-      csrfToken = sessionStorage.getItem(CSRF_KEY) || "";
+      var lasting = localStorage.getItem(key);
+      if (lasting) return lasting;
     } catch (_error) {
-      sessionToken = "";
-      csrfToken = "";
+      // ignore
     }
+    try {
+      return sessionStorage.getItem(key) || "";
+    } catch (_error) {
+      return "";
+    }
+  }
+
+  function storageSet(key, value) {
+    try {
+      localStorage.setItem(key, value);
+    } catch (_error) {
+      // ignore
+    }
+    try {
+      sessionStorage.removeItem(key);
+    } catch (_error) {
+      // ignore
+    }
+  }
+
+  function storageRemove(key) {
+    try {
+      localStorage.removeItem(key);
+    } catch (_error) {
+      // ignore
+    }
+    try {
+      sessionStorage.removeItem(key);
+    } catch (_error) {
+      // ignore
+    }
+  }
+
+  function readStoredAuth() {
+    sessionToken = storageGet(SESSION_KEY);
+    csrfToken = storageGet(CSRF_KEY);
   }
 
   function persistAuth(session) {
     csrfToken = session.csrfToken || "";
     sessionToken = session.sessionToken || sessionToken || "";
-    try {
-      if (sessionToken) sessionStorage.setItem(SESSION_KEY, sessionToken);
-      if (csrfToken) sessionStorage.setItem(CSRF_KEY, csrfToken);
-    } catch (_error) {
-      // ignore
-    }
+    if (sessionToken) storageSet(SESSION_KEY, sessionToken);
+    if (csrfToken) storageSet(CSRF_KEY, csrfToken);
     window.__crcSession = {
       csrfToken: csrfToken,
       sessionToken: sessionToken,
@@ -72,12 +103,8 @@
     csrfToken = "";
     sessionToken = "";
     window.__crcSession = null;
-    try {
-      sessionStorage.removeItem(SESSION_KEY);
-      sessionStorage.removeItem(CSRF_KEY);
-    } catch (_error) {
-      // ignore
-    }
+    storageRemove(SESSION_KEY);
+    storageRemove(CSRF_KEY);
   }
 
   function cleanupOldServiceWorkers() {
@@ -160,21 +187,20 @@
 
   async function restoreSession() {
     readStoredAuth();
-    if (!sessionToken) {
-      setLoggedIn(false);
-      loadAppModule().catch(function () {});
-      return;
-    }
 
     try {
       var session = await api("/api/session");
+      var restoredToken = session.sessionToken || sessionToken;
+      if (!restoredToken) {
+        throw new Error("缺少会话令牌");
+      }
       await handOffToApp({
         username: session.username,
         csrfToken: session.csrfToken,
-        sessionToken: sessionToken,
+        sessionToken: restoredToken,
       });
     } catch (_error) {
-      clearAuth();
+      if (sessionToken) clearAuth();
       setLoggedIn(false);
       loadAppModule().catch(function () {});
     }

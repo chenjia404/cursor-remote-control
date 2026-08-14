@@ -245,16 +245,19 @@ function parseSessionToken(rawToken: string): SessionPayload | null {
   }
 }
 
-export function readSession(request: FastifyRequest): SessionPayload | null {
+/** 当前请求上的有效会话令牌（Cookie 或 Bearer），供前端持久化以免隔天丢失 */
+export function getRawSessionToken(request: FastifyRequest): string | null {
   const rawCookie = request.cookies[SESSION_COOKIE];
-  if (rawCookie) {
-    const fromCookie = parseSessionToken(rawCookie);
-    if (fromCookie) return fromCookie;
-  }
+  if (rawCookie && parseSessionToken(rawCookie)) return rawCookie;
 
   const bearer = readBearerToken(request);
-  if (bearer) return parseSessionToken(bearer);
+  if (bearer && parseSessionToken(bearer)) return bearer;
   return null;
+}
+
+export function readSession(request: FastifyRequest): SessionPayload | null {
+  const raw = getRawSessionToken(request);
+  return raw ? parseSessionToken(raw) : null;
 }
 
 export async function requireAuth(request: FastifyRequest, reply: FastifyReply): Promise<void> {

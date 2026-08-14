@@ -7,7 +7,7 @@ import {
   setLocale,
   t,
   translateApiError,
-} from "./i18n.js?v=0.2.30";
+} from "./i18n.js?v=0.2.31";
 
 let markedRef = null;
 let purifyRef = null;
@@ -858,6 +858,12 @@ function showToast(message) {
 
 function getSessionToken() {
   if (window.__crcSession?.sessionToken) return window.__crcSession.sessionToken;
+  try {
+    const lasting = localStorage.getItem("crc_session_token");
+    if (lasting) return lasting;
+  } catch {
+    // ignore
+  }
   try {
     return sessionStorage.getItem("crc_session_token") || "";
   } catch {
@@ -2181,8 +2187,10 @@ export async function onBootAuthenticated(session) {
     username: session.username || "admin",
   };
   try {
-    sessionStorage.setItem("crc_session_token", session.sessionToken);
-    sessionStorage.setItem("crc_csrf_token", state.csrfToken);
+    localStorage.setItem("crc_session_token", session.sessionToken);
+    localStorage.setItem("crc_csrf_token", state.csrfToken);
+    sessionStorage.removeItem("crc_session_token");
+    sessionStorage.removeItem("crc_csrf_token");
   } catch {
     // ignore
   }
@@ -2241,6 +2249,14 @@ if (!$("#logoutButton")?.dataset.bootBound) {
     await api("/api/logout", { method: "POST", body: "{}" }).catch(() => {});
     state.csrfToken = "";
     window.__crcSession = null;
+    try {
+      localStorage.removeItem("crc_session_token");
+      localStorage.removeItem("crc_csrf_token");
+      sessionStorage.removeItem("crc_session_token");
+      sessionStorage.removeItem("crc_csrf_token");
+    } catch {
+      // ignore
+    }
     setLoggedIn(false);
   });
 }
