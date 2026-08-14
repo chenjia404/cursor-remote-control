@@ -659,9 +659,94 @@ button.small {
   color: #7dd3fc;
 }
 
+.nav-icon-wrap {
+  position: relative;
+}
+
 .nav-icon {
   font-size: 1rem;
   line-height: 1;
+}
+
+.nav-badge {
+  background: #1d4ed8;
+  border-radius: 999px;
+  color: #dbeafe;
+  font-size: 0.62rem;
+  font-weight: 800;
+  line-height: 1;
+  min-width: 1rem;
+  padding: 0.12rem 0.28rem;
+  position: absolute;
+  right: -0.65rem;
+  top: -0.35rem;
+}
+
+.session-switcher {
+  background: rgba(15, 23, 42, 0.94);
+  border-bottom: 1px solid rgba(148, 163, 184, 0.12);
+  display: flex;
+  flex-shrink: 0;
+  gap: 0.55rem;
+  overflow: hidden;
+  padding: 0.4rem 0.75rem 0.5rem;
+  position: sticky;
+  top: var(--header-h);
+  z-index: 19;
+}
+
+.session-switcher.hidden {
+  display: none;
+}
+
+.session-switcher-label {
+  align-self: center;
+  color: #94a3b8;
+  flex-shrink: 0;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+.session-switcher-list {
+  display: flex;
+  gap: 0.4rem;
+  min-width: 0;
+  overflow-x: auto;
+  padding-bottom: 0.1rem;
+  scrollbar-width: thin;
+}
+
+.session-switch-chip {
+  align-items: center;
+  background: #0f172a;
+  border: 1px solid #334155;
+  border-radius: 999px;
+  color: #e2e8f0;
+  display: inline-flex;
+  flex-shrink: 0;
+  font-size: 0.75rem;
+  font-weight: 650;
+  gap: 0.35rem;
+  max-width: 14rem;
+  padding: 0.28rem 0.65rem;
+}
+
+.session-switch-chip .status {
+  font-size: 0.68rem;
+  margin-left: 0;
+  padding: 0.1rem 0.35rem;
+}
+
+.session-switch-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-switch-chip.current {
+  background: rgba(56, 189, 248, 0.12);
+  border-color: rgba(56, 189, 248, 0.55);
+  color: #e0f2fe;
 }
 
 /* Follow-up dock */

@@ -7,7 +7,7 @@ import {
   setLocale,
   t,
   translateApiError,
-} from "./i18n.js?v=0.2.27";
+} from "./i18n.js?v=0.2.28";
 
 let markedRef = null;
 let purifyRef = null;
@@ -563,6 +563,7 @@ function switchTab(tabId) {
   updateContextHeader();
   updateComposerDock();
   updateOnboardingVisibility();
+  renderSessionSwitcher();
 }
 
 function openSheet(sheetId) {
@@ -1433,11 +1434,15 @@ function renderJobs() {
   const jobs = state.jobs.filter(jobMatchesFilter);
   if (state.jobs.length === 0) {
     list.innerHTML = `<p class="empty">${escapeHtml(t("history.empty"))}</p>`;
+    renderSessionSwitcher();
+    updateHistoryBadge();
     return;
   }
 
   if (jobs.length === 0) {
     list.innerHTML = `<p class="empty">${escapeHtml(t("history.noMatch"))}</p>`;
+    renderSessionSwitcher();
+    updateHistoryBadge();
     return;
   }
 
@@ -1461,6 +1466,8 @@ function renderJobs() {
       `;
     })
     .join("");
+  renderSessionSwitcher();
+  updateHistoryBadge();
 }
 
 function getJobTurns(job) {
@@ -1483,6 +1490,74 @@ function getJobTurns(job) {
 
 function conversationIsBusy(job) {
   return getJobTurns(job).some((turn) => ["queued", "running"].includes(turn.status));
+}
+
+function listBusyJobs() {
+  return state.jobs.filter((job) => conversationIsBusy(job) && !state.archivedJobIds.has(job.id));
+}
+
+function switcherLabel(job, busyJobs) {
+  const name = job.project?.name || t("session.empty");
+  const sameNameCount = busyJobs.filter((item) => item.project?.name === name).length;
+  if (sameNameCount < 2) return name;
+  const summary = String(job.promptSummary || "").trim();
+  return summary ? `${name} · ${summary.slice(0, 16)}` : name;
+}
+
+function renderSessionSwitcher() {
+  const root = $("#sessionSwitcher");
+  if (!root) return;
+
+  const busyJobs = listBusyJobs();
+  const show = state.activeTab === "session" && busyJobs.length > 1;
+  root.hidden = !show;
+  root.classList.toggle("hidden", !show);
+  if (!show) {
+    root.innerHTML = "";
+    return;
+  }
+
+  root.innerHTML = `
+    <span class="session-switcher-label">${escapeHtml(t("session.switcher"))}</span>
+    <div class="session-switcher-list">
+      ${busyJobs
+        .map((job) => {
+          const current = job.id === state.currentJobId ? " current" : "";
+          return `
+            <button type="button" class="session-switch-chip${current}" data-switch-job="${escapeHtml(job.id)}">
+              <span class="status status-${escapeHtml(job.status)}">${escapeHtml(statusText(job.status))}</span>
+              <span class="session-switch-chip-name">${escapeHtml(switcherLabel(job, busyJobs))}</span>
+            </button>
+          `;
+        })
+        .join("")}
+    </div>
+  `;
+}
+
+function updateHistoryBadge() {
+  const badge = $("#historyNavBadge");
+  if (!badge) return;
+  const count = listBusyJobs().length;
+  badge.hidden = count < 1;
+  badge.textContent = count > 9 ? "9+" : String(count);
+}
+
+async function openJob(jobId) {
+  if (!jobId || jobId === state.currentJobId) {
+    switchTab("session");
+    return;
+  }
+
+  rememberFollowUpDraft();
+  state.currentJobId = jobId;
+  state.chatPinnedToBottom = true;
+  switchTab("session");
+  const cached = findJob(jobId);
+  if (cached) renderCurrentJob(cached);
+  const chatOutput = $("#chatOutput");
+  if (chatOutput) delete chatOutput.dataset.ready;
+  await refreshCurrentJob();
 }
 
 function canFollowUp(job) {
@@ -1825,6 +1900,7 @@ function renderCurrentJob(job) {
 }
 
 let currentJobPollInFlight = false;
+let jobListPollAt = 0;
 
 function stopPollingCurrentJob() {
   if (!state.pollingTimer) return;
@@ -1832,15 +1908,41 @@ function stopPollingCurrentJob() {
   state.pollingTimer = null;
 }
 
+function shouldKeepPolling() {
+  return listBusyJobs().length > 0;
+}
+
+async function refreshJobList() {
+  const jobsData = await api("/api/jobs");
+  state.jobs = jobsData.jobs;
+  if (state.currentJob && state.currentJobId) {
+    upsertJob(state.currentJob);
+  }
+  renderJobs();
+}
+
 function startPollingCurrentJob() {
   if (state.pollingTimer) return;
   state.pollingTimer = window.setInterval(() => {
     if (currentJobPollInFlight) return;
     currentJobPollInFlight = true;
-    refreshCurrentJob()
+    const now = Date.now();
+    const tasks = [];
+    if (state.currentJobId) tasks.push(refreshCurrentJob());
+    if (now - jobListPollAt >= 5000 && shouldKeepPolling()) {
+      jobListPollAt = now;
+      tasks.push(refreshJobList());
+    }
+    if (tasks.length === 0) {
+      currentJobPollInFlight = false;
+      if (!shouldKeepPolling()) stopPollingCurrentJob();
+      return;
+    }
+    Promise.all(tasks)
       .catch((error) => showToast(error.message))
       .finally(() => {
         currentJobPollInFlight = false;
+        if (!shouldKeepPolling()) stopPollingCurrentJob();
       });
   }, 1000);
 }
@@ -1910,19 +2012,23 @@ async function refreshData() {
 
   if (state.currentJobId) {
     await refreshCurrentJob();
+  } else if (shouldKeepPolling()) {
+    startPollingCurrentJob();
   }
 }
 
 async function refreshCurrentJob() {
   if (!state.currentJobId) return;
 
-  const { job } = await api(`/api/jobs/${state.currentJobId}`);
+  const jobId = state.currentJobId;
+  const { job } = await api(`/api/jobs/${jobId}`);
+  if (state.currentJobId !== jobId) return;
   upsertJob(job);
   renderJobs();
   renderCurrentJob(job);
   maybeNotifyJobStatus(job);
 
-  if (conversationIsBusy(job)) {
+  if (shouldKeepPolling()) {
     startPollingCurrentJob();
     return;
   }
@@ -2342,6 +2448,12 @@ document.querySelector(".mode-segment")?.addEventListener("click", (event) => {
   syncModeSelectFromSegment(button.dataset.mode === "plan" ? "plan" : "agent");
 });
 
+on("#sessionSwitcher", "click", (event) => {
+  const chip = event.target.closest("[data-switch-job]");
+  if (!chip) return;
+  openJob(chip.dataset.switchJob).catch((error) => showToast(error.message));
+});
+
 on("#jobList", "click", async (event) => {
   const archiveButton = event.target.closest(".job-archive-btn");
   if (archiveButton) {
@@ -2352,15 +2464,7 @@ on("#jobList", "click", async (event) => {
 
   const item = event.target.closest(".job-item");
   if (!item) return;
-
-  state.currentJobId = item.dataset.jobId;
-  state.chatPinnedToBottom = true;
-  switchTab("session");
-
-  const chatOutput = $("#chatOutput");
-  if (chatOutput) delete chatOutput.dataset.ready;
-  await refreshCurrentJob();
-  renderJobs();
+  openJob(item.dataset.jobId).catch((error) => showToast(error.message));
 });
 
 on("#historyFilters", "click", (event) => {
