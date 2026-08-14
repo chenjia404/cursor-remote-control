@@ -290,6 +290,10 @@ button.small {
   min-height: 0;
 }
 
+#appView[data-active-tab="history"]:not(.is-wide) .main-panel {
+  display: none;
+}
+
 .history-panel {
   flex-shrink: 0;
   padding: 0 0.75rem 0.75rem;
