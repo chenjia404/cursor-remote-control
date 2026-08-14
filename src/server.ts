@@ -88,14 +88,17 @@ async function start(): Promise<void> {
       if (filePath.endsWith(".webmanifest")) {
         reply.header("Content-Type", "application/manifest+json; charset=utf-8");
       }
-      // 入口与启动脚本不要被中间层长期缓存，避免旧表单/旧 SW 残留
+      // 入口、脚本和样式不要被 CDN / 反代按扩展名缓存。
+      // 部分 CDN 默认缓存 .css，一旦缓存了 404，页面会一直丢样式。
+      const fileName = path.basename(filePath);
       if (
-        filePath.endsWith(`${path.sep}index.html`) ||
-        filePath.endsWith(`${path.sep}boot.js`) ||
-        filePath.endsWith(`${path.sep}app.js`) ||
-        filePath.endsWith(`${path.sep}i18n.js`) ||
-        filePath.endsWith(`${path.sep}sw.js`) ||
-        filePath.endsWith(`${path.sep}version.js`)
+        fileName === "index.html" ||
+        fileName === "boot.js" ||
+        fileName === "app.js" ||
+        fileName === "i18n.js" ||
+        fileName === "sw.js" ||
+        fileName === "version.js" ||
+        fileName === "styles.css"
       ) {
         reply.header("Cache-Control", "no-cache, no-store, must-revalidate");
       }

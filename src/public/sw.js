@@ -1,4 +1,4 @@
-const APP_VERSION = "0.2.12";
+const APP_VERSION = "0.2.13";
 const CACHE_NAME = `cursor-remote-control-v${APP_VERSION}`;
 const APP_SHELL = [
   "/",
@@ -66,9 +66,14 @@ self.addEventListener("fetch", (event) => {
     requestUrl.pathname === "/manifest.webmanifest"
   ) {
     event.respondWith(
-      networkFirst(event.request).then(
-        (response) => response || caches.match("/") || caches.match(event.request),
-      ),
+      networkFirst(event.request).then((response) => {
+        if (response) return response;
+        // 导航失败才回退首页；CSS/JS 不能回退成 HTML，否则浏览器会当成 404/MIME 错误
+        if (event.request.mode === "navigate") {
+          return caches.match("/") || caches.match(event.request);
+        }
+        return caches.match(event.request);
+      }),
     );
     return;
   }
