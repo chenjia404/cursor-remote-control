@@ -178,7 +178,12 @@ button.small {
 .app-shell {
   display: flex;
   flex-direction: column;
-  min-height: 100vh;
+  height: 100vh;
+  height: 100dvh;
+  max-height: 100vh;
+  max-height: 100dvh;
+  min-height: 0;
+  overflow: hidden;
   padding-bottom: calc(var(--bottom-nav-h) + var(--safe-bottom));
 }
 
@@ -191,6 +196,7 @@ button.small {
   background: rgba(15, 23, 42, 0.95);
   border-bottom: 1px solid rgba(148, 163, 184, 0.15);
   display: flex;
+  flex-shrink: 0;
   gap: 0.75rem;
   justify-content: space-between;
   min-height: var(--header-h);
@@ -239,26 +245,28 @@ button.small {
 
 .app-body {
   display: flex;
-  flex: 1;
+  flex: 1 1 0;
   flex-direction: column;
   min-height: 0;
+  overflow: hidden;
 }
 
 .main-panel {
   display: flex;
-  flex: 1;
+  flex: 1 1 0;
   flex-direction: column;
   min-height: 0;
   min-width: 0;
+  overflow: hidden;
 }
 
 .tab-panel {
   display: flex;
-  flex: 1;
+  flex: 1 1 0;
   flex-direction: column;
-  gap: 0.75rem;
-  min-height: calc(100vh - var(--header-h) - var(--bottom-nav-h) - var(--composer-h));
+  min-height: 0;
   min-width: 0;
+  overflow: hidden;
 }
 
 .tab-panel.active:not([hidden]) {
@@ -273,14 +281,17 @@ button.small {
   display: none;
   flex-direction: column;
   min-height: 0;
+  overflow: hidden;
 }
 
 #appView[data-active-tab="history"] .history-aside {
   display: flex;
-  flex: 1;
+  flex: 1 1 0;
+  min-height: 0;
 }
 
 .history-panel {
+  flex-shrink: 0;
   padding: 0 0.75rem 0.75rem;
 }
 
@@ -325,12 +336,14 @@ button.small {
 
 .pull-refresh-zone {
   display: flex;
-  flex: 1;
+  flex: 1 1 0;
   flex-direction: column;
   min-height: 0;
-  overflow: auto;
+  overflow-x: hidden;
+  overflow-y: auto;
   overscroll-behavior-y: contain;
   position: relative;
+  touch-action: pan-y;
   -webkit-overflow-scrolling: touch;
 }
 
@@ -486,7 +499,8 @@ button.small {
 }
 
 .projects-panel {
-  padding: 0 0.75rem 0.75rem;
+  flex-shrink: 0;
+  padding: 0 0.75rem 1.25rem;
 }
 
 .project-current-card {
@@ -1257,8 +1271,9 @@ button.small {
   .app-shell {
     border: 1px solid rgba(148, 163, 184, 0.15);
     border-radius: 1.2rem;
+    height: calc(100dvh - 2rem);
     margin: 1rem auto;
-    max-height: calc(100vh - 2rem);
+    max-height: calc(100dvh - 2rem);
     overflow: hidden;
   }
 
@@ -1300,13 +1315,13 @@ button.small {
   .app-body {
     display: grid;
     grid-template-columns: var(--sidebar-w) 1fr;
-    min-height: calc(100vh - var(--header-h) - var(--bottom-nav-h) - var(--composer-h));
+    min-height: 0;
   }
 
   .history-aside {
     border-right: 1px solid rgba(148, 163, 184, 0.15);
     display: flex !important;
-    max-height: calc(100vh - var(--header-h) - var(--bottom-nav-h) - var(--composer-h));
+    max-height: none;
   }
 
   .history-panel {
@@ -1318,7 +1333,7 @@ button.small {
   }
 
   .tab-panel {
-    min-height: calc(100vh - var(--header-h) - var(--bottom-nav-h) - var(--composer-h));
+    min-height: 0;
   }
 
   .chat {
@@ -1328,10 +1343,12 @@ button.small {
 
 @media (min-width: 900px) and (orientation: landscape) {
   .app-shell {
-    max-height: 100vh;
+    height: 100dvh;
+    margin: 0 auto;
+    max-height: 100dvh;
   }
 
   .app-body {
-    min-height: calc(100vh - var(--header-h) - var(--bottom-nav-h) - var(--composer-h));
+    min-height: 0;
   }
 }
