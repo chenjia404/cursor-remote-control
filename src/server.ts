@@ -14,7 +14,12 @@ import {
   verifyPassword,
 } from "./auth.js";
 import { assertRequiredConfig, config } from "./config.js";
-import { cancelCursorJob, resumeQueuedConversations, scheduleConversation } from "./cursorAgent.js";
+import {
+  cancelCursorJob,
+  interruptRunningTurn,
+  resumeQueuedConversations,
+  scheduleConversation,
+} from "./cursorAgent.js";
 import { createJob, enqueueJobTurn, getJob, listJobs, loadJobs, recoverInterruptedJobs } from "./jobs.js";
 import { defaultModelSelection, listCursorModels, normalizeModelSelection, warmupModelCatalog } from "./models.js";
 import {
@@ -57,6 +62,7 @@ const followUpSchema = z.object({
   prompt: z.string().min(1).max(20000),
   mode: z.enum(["agent", "plan"]).optional(),
   model: modelSelectionSchema.optional(),
+  delivery: z.enum(["queue", "interrupt"]).optional(),
 });
 
 const browseSchema = z.object({
@@ -283,13 +289,27 @@ async function start(): Promise<void> {
       return;
     }
 
+    const delivery = body.delivery ?? "queue";
+    const wasRunning = existing.turns.some((turn) => turn.status === "running");
     const job = enqueueJobTurn(existing.id, {
       prompt: body.prompt,
       mode: body.mode ?? existing.mode ?? config.cursorDefaultMode,
       model: normalizeModelSelection(body.model ?? existing.model, catalog),
+      delivery,
     });
+
+    if (delivery === "interrupt" && wasRunning) {
+      try {
+        await interruptRunningTurn(job.id);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        reply.code(409).send({ error: message, job: getJob(job.id) ?? job });
+        return;
+      }
+    }
+
     scheduleConversation(job.id);
-    reply.code(202).send({ job });
+    reply.code(202).send({ job: getJob(job.id) ?? job });
   });
 
   app.post("/api/jobs/:id/cancel", { preHandler: requireCsrf }, async (request, reply) => {

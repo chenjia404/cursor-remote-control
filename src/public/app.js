@@ -7,7 +7,7 @@ import {
   setLocale,
   t,
   translateApiError,
-} from "./i18n.js?v=0.2.18";
+} from "./i18n.js?v=0.2.19";
 
 let markedRef = null;
 let purifyRef = null;
@@ -788,6 +788,7 @@ function findJob(jobId) {
 function updateFollowUpComposer(job) {
   const form = $("#followUpForm");
   const button = $("#followUpButton");
+  const appendButton = $("#followUpAppendButton");
   const hint = $("#followUpHint");
   const input = $("#followUpInput");
   const modeSelect = $("#followUpModeSelect");
@@ -814,14 +815,25 @@ function updateFollowUpComposer(job) {
 
   if (!canFollowUp(job)) {
     button.disabled = true;
+    if (appendButton) {
+      appendButton.disabled = true;
+      appendButton.classList.add("hidden");
+    }
     input.disabled = true;
     hint.textContent = t("session.followUpHintNoAgent");
     return;
   }
 
+  const busy = conversationIsBusy(job);
   button.disabled = false;
+  button.textContent = busy ? t("session.followUpQueue") : t("session.followUpSend");
   input.disabled = false;
-  hint.textContent = conversationIsBusy(job) ? t("session.followUpHintBusy") : t("session.followUpHintReady");
+  if (appendButton) {
+    appendButton.classList.toggle("hidden", !busy);
+    appendButton.disabled = !busy;
+    appendButton.textContent = t("session.followUpAppend");
+  }
+  hint.textContent = busy ? t("session.followUpHintBusy") : t("session.followUpHintReady");
 }
 
 function updateStopButton(job) {
@@ -1005,7 +1017,7 @@ function startPollingCurrentJob() {
   }, 2000);
 }
 
-async function submitFollowUp(prompt, jobId) {
+async function submitFollowUp(prompt, jobId, delivery = "queue") {
   const job = findJob(jobId);
   if (!job) {
     showToast(t("toast.selectJob"));
@@ -1023,7 +1035,7 @@ async function submitFollowUp(prompt, jobId) {
 
   const { job: updated } = await api(`/api/jobs/${job.id}/messages`, {
     method: "POST",
-    body: JSON.stringify({ prompt, mode, model }),
+    body: JSON.stringify({ prompt, mode, model, delivery }),
   });
 
   state.followUpDrafts.delete(job.id);
@@ -1260,9 +1272,31 @@ on("#followUpForm", "submit", async (event) => {
   }
 
   const button = $("#followUpButton");
+  const appendButton = $("#followUpAppendButton");
   if (button) button.disabled = true;
+  if (appendButton) appendButton.disabled = true;
   try {
-    await submitFollowUp(prompt, state.currentJobId);
+    await submitFollowUp(prompt, state.currentJobId, "queue");
+  } catch (error) {
+    showToast(error.message);
+  } finally {
+    updateFollowUpComposer(state.currentJob);
+  }
+});
+
+on("#followUpAppendButton", "click", async () => {
+  const prompt = $("#followUpInput")?.value.trim();
+  if (!prompt) {
+    showToast(t("toast.enterFollowUp"));
+    return;
+  }
+
+  const button = $("#followUpButton");
+  const appendButton = $("#followUpAppendButton");
+  if (button) button.disabled = true;
+  if (appendButton) appendButton.disabled = true;
+  try {
+    await submitFollowUp(prompt, state.currentJobId, "interrupt");
   } catch (error) {
     showToast(error.message);
   } finally {

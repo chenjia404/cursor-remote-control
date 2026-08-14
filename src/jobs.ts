@@ -10,6 +10,9 @@ export type JobStatus = "queued" | "running" | "finished" | "error" | "cancelled
 /** Cursor SDK 支持的对话模式 */
 export type AgentMode = "agent" | "plan";
 
+/** 后续指令投递：排队等当前轮结束，或中断当前轮立刻执行 */
+export type FollowUpDelivery = "queue" | "interrupt";
+
 export type JobLog = {
   time: string;
   level: "info" | "thinking" | "assistant" | "error";
@@ -29,6 +32,8 @@ export type JobTurn = {
   model?: AgentModelSelection;
   result?: string;
   error?: string;
+  /** 中断投递的轮次启动时会强制结束残留 Run */
+  delivery?: FollowUpDelivery;
 };
 
 export type JobRecord = {
@@ -80,6 +85,7 @@ function createTurn(input: {
   mode: AgentMode;
   model?: AgentModelSelection;
   status?: JobStatus;
+  delivery?: FollowUpDelivery;
 }): JobTurn {
   return {
     id: crypto.randomUUID(),
@@ -88,7 +94,29 @@ function createTurn(input: {
     createdAt: now(),
     mode: input.mode,
     model: input.model,
+    delivery: input.delivery,
   };
+}
+
+function insertFollowUpTurn(job: JobRecord, turn: JobTurn, delivery: FollowUpDelivery): void {
+  if (delivery !== "interrupt") {
+    job.turns.push(turn);
+    return;
+  }
+
+  const runningIndex = job.turns.findIndex((item) => item.status === "running");
+  if (runningIndex >= 0) {
+    job.turns.splice(runningIndex + 1, 0, turn);
+    return;
+  }
+
+  const queuedIndex = job.turns.findIndex((item) => item.status === "queued");
+  if (queuedIndex >= 0) {
+    job.turns.splice(queuedIndex, 0, turn);
+    return;
+  }
+
+  job.turns.push(turn);
 }
 
 function describeRunSettings(mode: AgentMode, model?: AgentModelSelection): string {
@@ -345,29 +373,40 @@ export function createJob(input: {
 
 export function enqueueJobTurn(
   jobId: string,
-  input: { prompt: string; mode: AgentMode; model?: AgentModelSelection },
+  input: {
+    prompt: string;
+    mode: AgentMode;
+    model?: AgentModelSelection;
+    delivery?: FollowUpDelivery;
+  },
 ): JobRecord {
   const rootId = getConversationRootId(jobId);
   const job = jobs.get(rootId);
   if (!job) throw new Error("任务不存在");
 
   ensureJobTurns(job);
-  const turn = createTurn({ prompt: input.prompt, mode: input.mode, model: input.model });
-  job.turns.push(turn);
+  const delivery = input.delivery ?? "queue";
+  const turn = createTurn({
+    prompt: input.prompt,
+    mode: input.mode,
+    model: input.model,
+    delivery,
+  });
+  insertFollowUpTurn(job, turn, delivery);
   job.mode = input.mode;
   if (input.model) job.model = input.model;
   job.updatedAt = now();
   syncJobStatusFromTurns(job);
 
   const busy = job.turns.some((item) => item.id !== turn.id && (item.status === "running" || item.status === "queued"));
-  appendJobLog(
-    job.id,
-    "info",
-    busy
-      ? "已加入排队，当前轮次结束后将自动执行后续指令。"
-      : `已追加后续指令（${describeRunSettings(input.mode, input.model)}），等待执行。`,
-    turn.id,
-  );
+  const settings = describeRunSettings(input.mode, input.model);
+  let message = `已追加后续指令（${settings}），等待执行。`;
+  if (delivery === "interrupt" && busy) {
+    message = `已插入追加指令（${settings}），将中断当前轮次并立即执行。`;
+  } else if (busy) {
+    message = `已加入排队（${settings}），当前轮次结束后将自动执行。`;
+  }
+  appendJobLog(job.id, "info", message, turn.id);
   return job;
 }
 

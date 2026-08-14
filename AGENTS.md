@@ -138,6 +138,7 @@ pnpm autostart:uninstall
 - Cursor SDK 当前仅支持 `agent` 与 `plan` 两种对话模式；可通过 `Agent.create({ mode })` 与 `agent.send(prompt, { mode })` 切换。
 - Agent 输出是流式分片，写日志时需要合并连续 assistant 内容，避免界面出现一行一个词。
 - 追加指令写入同一任务的 `turns`，通过 `Agent.resume` 继续同一会话，不要再拆成新的子任务。
+- 后续指令默认 `delivery: "queue"`（等当前轮结束）；`interrupt` 会取消当前 Run 并把新轮次插到队首立刻执行。Cursor SDK 本地模式没有真正的「注入当前 Run」接口，追加只能通过中断当前轮实现。
 
 ## Docker 注意事项
 

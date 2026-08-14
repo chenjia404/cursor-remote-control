@@ -638,6 +638,7 @@ label {
 .follow-up-actions {
   align-items: center;
   display: flex;
+  flex-wrap: wrap;
   gap: 0.75rem;
   justify-content: space-between;
 }
@@ -651,6 +652,12 @@ label {
   border-radius: 0.75rem;
   min-width: 4.5rem;
   padding: 0.55rem 0.9rem;
+}
+
+.follow-up-buttons {
+  display: flex;
+  flex-shrink: 0;
+  gap: 0.45rem;
 }
 
 .job-list {

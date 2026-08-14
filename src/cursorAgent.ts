@@ -173,6 +173,30 @@ export async function cancelCursorJob(jobId: string): Promise<JobRecord> {
   return getJob(cancelled.id) ?? cancelled;
 }
 
+/** 只中断当前执行轮次，保留排队中的后续指令。 */
+export async function interruptRunningTurn(jobId: string): Promise<JobRecord> {
+  const job = getJob(jobId);
+  if (!job) throw new Error("任务不存在");
+
+  const runningTurn = job.turns.find((turn) => turn.status === "running");
+  if (!runningTurn) return job;
+
+  const run = activeRuns.get(job.id);
+  if (!run) {
+    return markTurnCancelled(job.id, runningTurn.id, "当前轮次已中断，改为执行追加指令。");
+  }
+
+  if (!run.supports("cancel")) {
+    const reason = run.unsupportedReason("cancel") || "当前 Cursor SDK 运行不支持取消。";
+    appendJobLog(jobId, "error", `中断当前轮次失败：${reason}`, runningTurn.id);
+    throw new UnsupportedRunOperationError("cancel", reason);
+  }
+
+  appendJobLog(jobId, "info", "收到追加指令，正在中断当前轮次。", runningTurn.id);
+  await run.cancel();
+  return getJob(job.id) ?? job;
+}
+
 async function pumpConversation(jobId: string): Promise<void> {
   while (true) {
     const next = nextQueuedTurn(jobId);
@@ -233,7 +257,11 @@ export async function runJobTurn(jobId: string, turnId: string): Promise<void> {
     updateJob(job.id, { agentId: agent.agentId, activeTurnId: turn.id, model: selection });
     if (isTurnCancelled(job.id, turn.id)) return;
 
-    const run = await agent.send(turn.prompt, { mode, model: toSdkModel(selection) });
+    const run = await agent.send(turn.prompt, {
+      mode,
+      model: toSdkModel(selection),
+      ...(turn.delivery === "interrupt" ? { local: { force: true } } : {}),
+    });
     activeRuns.set(job.id, run);
     updateJob(job.id, { runId: run.id });
     appendJobLog(job.id, "info", `Run 已启动：${run.id ?? "unknown"}`, turn.id);
