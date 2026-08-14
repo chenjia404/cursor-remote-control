@@ -7,7 +7,7 @@ import {
   setLocale,
   t,
   translateApiError,
-} from "./i18n.js?v=0.2.20";
+} from "./i18n.js?v=0.2.21";
 
 let markedRef = null;
 let purifyRef = null;
@@ -84,23 +84,22 @@ const FALLBACK_MODELS = [
 
 const MODE_STORAGE_KEY = "cursor-rc-mode";
 const MODEL_STORAGE_KEY = "cursor-rc-model";
-const PANEL_STORAGE_KEY = "cursor-rc-panels";
-const DEFAULT_PANEL_EXPANDED = {
-  submit: true,
-  session: true,
-  history: false,
-};
+const PROJECT_STORAGE_KEY = "cursor-rc-project";
+const TAB_STORAGE_KEY = "cursor-rc-tab";
 
 const state = {
   csrfToken: "",
   jobs: [],
   projects: [],
+  selectedProjectId: "",
   currentJobId: "",
   currentJob: null,
+  activeTab: "session",
   pollingTimer: null,
   installPromptEvent: null,
   followUpDrafts: new Map(),
   stoppingJobIds: new Set(),
+  chatPinnedToBottom: true,
   browse: {
     open: false,
     currentPath: null,
@@ -114,11 +113,6 @@ const state = {
 };
 
 initLocale();
-
-const versionEl = document.querySelector("#appVersion");
-if (versionEl) {
-  versionEl.textContent = `v${APP_VERSION}`;
-}
 
 const $ = (selector) => document.querySelector(selector);
 
@@ -147,13 +141,15 @@ function applyLocale(locale) {
   setLocale(locale);
   applyDomI18n();
   updateLangSwitch();
-  renderProjects();
+  renderProjectList();
   renderJobs();
   renderBrowsePanel();
   renderCurrentJob(state.currentJob);
-  applyPanelState();
+  updateContextHeader();
+  updateNewTaskProjectLabel();
   renderModelSettings("submit");
   renderModelSettings("followUp");
+  syncModeSegmentFromSelect();
 }
 
 function loadSavedMode() {
@@ -174,54 +170,80 @@ function saveMode(mode) {
   }
 }
 
-function loadPanelState() {
-  const next = { ...DEFAULT_PANEL_EXPANDED };
+function loadSavedTab() {
   try {
-    const raw = localStorage.getItem(PANEL_STORAGE_KEY);
-    if (!raw) return next;
-    const parsed = JSON.parse(raw);
-    for (const key of Object.keys(DEFAULT_PANEL_EXPANDED)) {
-      if (typeof parsed[key] === "boolean") next[key] = parsed[key];
-    }
+    const saved = localStorage.getItem(TAB_STORAGE_KEY);
+    if (saved === "session" || saved === "history" || saved === "projects") return saved;
   } catch {
-    // localStorage 不可用或数据损坏时使用默认值
+    // localStorage 不可用时忽略
   }
-  return next;
+  return "session";
 }
 
-function savePanelState(panels) {
+function saveTab(tab) {
   try {
-    localStorage.setItem(PANEL_STORAGE_KEY, JSON.stringify(panels));
+    localStorage.setItem(TAB_STORAGE_KEY, tab);
   } catch {
     // localStorage 不可用时忽略
   }
 }
 
-function applyPanelState(panels = loadPanelState()) {
-  document.querySelectorAll("[data-panel]").forEach((card) => {
-    const id = card.dataset.panel;
-    if (!id || !(id in DEFAULT_PANEL_EXPANDED)) return;
-    const expanded = panels[id] !== false;
-    card.classList.toggle("is-collapsed", !expanded);
-    const toggle = card.querySelector("[data-panel-toggle]");
-    if (toggle) {
-      toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
-      toggle.setAttribute("aria-label", `${t(expanded ? "panel.collapse" : "panel.expand")} ${t(`${id}.title`)}`);
-    }
+function loadSavedProjectId() {
+  try {
+    return localStorage.getItem(PROJECT_STORAGE_KEY) || "";
+  } catch {
+    return "";
+  }
+}
+
+function saveSelectedProjectId(projectId) {
+  state.selectedProjectId = projectId || "";
+  try {
+    if (projectId) localStorage.setItem(PROJECT_STORAGE_KEY, projectId);
+    else localStorage.removeItem(PROJECT_STORAGE_KEY);
+  } catch {
+    // localStorage 不可用时忽略
+  }
+}
+
+function switchTab(tabId) {
+  const tab = tabId === "history" || tabId === "projects" ? tabId : "session";
+  state.activeTab = tab;
+  saveTab(tab);
+
+  document.querySelectorAll(".tab-panel").forEach((panel) => {
+    const active = panel.dataset.tab === tab;
+    panel.classList.toggle("active", active);
+    panel.hidden = !active;
   });
+
+  document.querySelectorAll(".nav-item").forEach((button) => {
+    const active = button.dataset.tab === tab;
+    button.classList.toggle("active", active);
+    button.setAttribute("aria-selected", active ? "true" : "false");
+  });
+
+  updateContextHeader();
+  updateComposerDock();
 }
 
-function setPanelExpanded(id, expanded) {
-  if (!(id in DEFAULT_PANEL_EXPANDED)) return;
-  const panels = loadPanelState();
-  panels[id] = Boolean(expanded);
-  savePanelState(panels);
-  applyPanelState(panels);
+function openSheet(sheetId) {
+  const sheet = document.getElementById(sheetId);
+  if (!sheet) return;
+  sheet.classList.remove("hidden");
+  sheet.setAttribute("aria-hidden", "false");
 }
 
-function togglePanel(id) {
-  const panels = loadPanelState();
-  setPanelExpanded(id, !panels[id]);
+function closeSheet(sheetId) {
+  const sheet = document.getElementById(sheetId);
+  if (!sheet) return;
+  sheet.classList.add("hidden");
+  sheet.setAttribute("aria-hidden", "true");
+}
+
+function closeAllSheets() {
+  closeSheet("newTaskSheet");
+  closeSheet("settingsSheet");
 }
 
 function getModeFromSelect(select) {
@@ -232,6 +254,19 @@ function getModeFromSelect(select) {
 function setModeSelect(select, mode) {
   if (!select) return;
   select.value = mode === "plan" ? "plan" : "agent";
+  syncModeSegmentFromSelect();
+}
+
+function syncModeSegmentFromSelect() {
+  const mode = getModeFromSelect($("#modeSelect"));
+  document.querySelectorAll(".mode-segment-btn").forEach((button) => {
+    button.classList.toggle("active", button.dataset.mode === mode);
+  });
+}
+
+function syncModeSelectFromSegment(mode) {
+  setModeSelect($("#modeSelect"), mode);
+  saveMode(mode);
 }
 
 function hasI18n(key) {
@@ -519,7 +554,6 @@ async function api(path, options = {}) {
   return data;
 }
 
-/** 清除误用 GET 提交残留在地址栏的账号密码，避免泄露与干扰 */
 function stripCredentialsFromUrl() {
   try {
     const url = new URL(window.location.href);
@@ -536,46 +570,77 @@ function stripCredentialsFromUrl() {
 function setLoggedIn(loggedIn) {
   $("#loginView").classList.toggle("hidden", loggedIn);
   $("#appView").classList.toggle("hidden", !loggedIn);
-  $("#logoutButton").classList.toggle("hidden", !loggedIn);
 }
 
-function renderProjects() {
-  const select = $("#projectSelect");
+function findProject(projectId) {
+  return state.projects.find((project) => project.id === projectId) || null;
+}
+
+function ensureSelectedProject() {
+  if (state.selectedProjectId && findProject(state.selectedProjectId)) return;
+  const saved = loadSavedProjectId();
+  if (saved && findProject(saved)) {
+    state.selectedProjectId = saved;
+    return;
+  }
+  if (state.projects[0]) {
+    saveSelectedProjectId(state.projects[0].id);
+  }
+}
+
+function updateNewTaskProjectLabel() {
+  const label = $("#newTaskProjectName");
+  if (!label) return;
+  const project = findProject(state.selectedProjectId);
+  label.textContent = project ? project.name : t("project.noneSelected");
+}
+
+function renderProjectList() {
+  const list = $("#projectList");
   const hint = $("#projectSelectHint");
-  const previousValue = select.value;
-  const keyword = $("#projectSearchInput").value.trim().toLowerCase();
+  const keyword = $("#projectSearchInput")?.value.trim().toLowerCase() || "";
   const projects = state.projects.filter((project) => {
     if (!keyword) return true;
     return `${project.name} ${project.path}`.toLowerCase().includes(keyword);
   });
 
+  ensureSelectedProject();
+
   if (state.projects.length === 0) {
-    select.innerHTML = `<option value="">${escapeHtml(t("project.noneSelected"))}</option>`;
+    list.innerHTML = `<p class="empty">${escapeHtml(t("project.noneSelected"))}</p>`;
     if (hint) hint.textContent = t("submit.projectHint");
+    updateNewTaskProjectLabel();
     return;
   }
 
   if (projects.length === 0) {
-    select.innerHTML = `<option value="">${escapeHtml(t("project.noMatch"))}</option>`;
+    list.innerHTML = `<p class="empty">${escapeHtml(t("project.noMatch"))}</p>`;
+    updateNewTaskProjectLabel();
     return;
   }
 
-  select.innerHTML = projects
+  list.innerHTML = projects
     .map((project) => {
+      const activeClass = project.id === state.selectedProjectId ? " active" : "";
       const modifiedAt = project.modifiedAt ? formatDateTime(project.modifiedAt) : t("project.unknownTime");
-      return `<option value="${project.id}">${escapeHtml(project.name)} · ${escapeHtml(modifiedAt)} · ${escapeHtml(project.path)}</option>`;
+      return `
+        <button type="button" class="project-item${activeClass}" data-project-id="${escapeHtml(project.id)}">
+          <span class="project-item-name">${escapeHtml(project.name)}</span>
+          <span class="project-item-path">${escapeHtml(modifiedAt)} · ${escapeHtml(project.path)}</span>
+        </button>
+      `;
     })
     .join("");
 
-  if (projects.some((project) => project.id === previousValue)) {
-    select.value = previousValue;
-  }
+  if (hint) hint.textContent = t("submit.projectHint");
+  updateNewTaskProjectLabel();
 }
 
-function setBrowsePanelOpen(open) {
+function setBrowseOverlayOpen(open) {
   state.browse.open = open;
-  $("#browsePanel").classList.toggle("hidden", !open);
-  $("#browseOpenButton").classList.toggle("hidden", open);
+  const overlay = $("#browseOverlay");
+  overlay?.classList.toggle("hidden", !open);
+  overlay?.setAttribute("aria-hidden", open ? "false" : "true");
 }
 
 function renderBrowsePanel() {
@@ -586,7 +651,6 @@ function renderBrowsePanel() {
   const { currentPath, currentIsProject, entries, loading } = state.browse;
 
   pathEl.textContent = currentPath || t("submit.browseRootHint");
-  // 已进入具体目录时允许返回；在某个 PROJECT_ROOT 顶层时回到根列表
   upButton.disabled = loading || !currentPath;
   selectButton.disabled = loading || !currentPath || !currentIsProject;
   selectButton.textContent = currentIsProject ? t("submit.browseConfirm") : t("submit.browseNotProject");
@@ -650,9 +714,10 @@ async function confirmBrowseSelection(projectPath) {
       body: JSON.stringify({ path: projectPath }),
     });
     await refreshData();
-    $("#projectSelect").value = project.id;
-    setBrowsePanelOpen(false);
+    saveSelectedProjectId(project.id);
+    setBrowseOverlayOpen(false);
     showToast(t("project.confirmed", { name: project.name }));
+    switchTab("projects");
   } catch (error) {
     showToast(error.message);
   } finally {
@@ -714,18 +779,61 @@ function rememberFollowUpDraft() {
 function autosizeTextarea(input) {
   input.style.height = "auto";
   input.style.height = `${Math.min(input.scrollHeight, 160)}px`;
+  updateComposerDock();
+}
+
+function updateComposerDock() {
+  const dock = $("#followUpDock");
+  const appShell = $("#appView");
+  if (!dock || !appShell) return;
+
+  const show = state.activeTab === "session" && Boolean(state.currentJob);
+  dock.classList.toggle("hidden", !show);
+  appShell.classList.toggle("has-composer", show);
+
+  if (show) {
+    const height = dock.offsetHeight;
+    document.documentElement.style.setProperty("--composer-h", `${height}px`);
+  } else {
+    document.documentElement.style.setProperty("--composer-h", "0px");
+  }
+}
+
+function updateContextHeader(job = state.currentJob) {
+  const eyebrow = $("#contextEyebrow");
+  const title = $("#contextTitle");
+  const status = $("#contextStatus");
+
+  if (state.activeTab === "history") {
+    eyebrow.textContent = t("nav.history");
+    title.textContent = t("history.title");
+    status.classList.add("hidden");
+    return;
+  }
+
+  if (state.activeTab === "projects") {
+    eyebrow.textContent = t("nav.projects");
+    title.textContent = t("nav.projects");
+    status.classList.add("hidden");
+    return;
+  }
+
+  eyebrow.textContent = t("nav.session");
+  if (!job) {
+    title.textContent = t("session.empty");
+    status.classList.add("hidden");
+    return;
+  }
+
+  title.textContent = job.project?.name || t("session.empty");
+  status.textContent = statusText(job.status);
+  status.className = `status status-${job.status}`;
+  status.classList.remove("hidden");
 }
 
 function renderJobs() {
   const list = $("#jobList");
-  const parentSelect = $("#parentJobSelect");
   rememberFollowUpDraft();
-
-  parentSelect.innerHTML =
-    `<option value="">${escapeHtml(t("submit.newSession"))}</option>` +
-    state.jobs
-      .map((job) => `<option value="${job.id}">${escapeHtml(job.project.name)} - ${escapeHtml(job.promptSummary)}</option>`)
-      .join("");
 
   if (state.jobs.length === 0) {
     list.innerHTML = `<p class="empty">${escapeHtml(t("history.empty"))}</p>`;
@@ -740,7 +848,7 @@ function renderJobs() {
           <div class="job-item-summary">
             <strong>${escapeHtml(job.project.name)}<span class="status status-${job.status}">${statusText(job.status)}</span>${modeBadge(job.mode)}${formatModelBadge(job.model)}</strong>
             <div>${escapeHtml(job.promptSummary)}</div>
-            <div class="meta">${escapeHtml(formatDateTime(job.createdAt))} · ${job.id}</div>
+            <div class="meta">${escapeHtml(formatDateTime(job.createdAt))}</div>
           </div>
         </article>
       `;
@@ -798,7 +906,7 @@ function upsertJob(job) {
 function updateFollowUpComposer(job) {
   const form = $("#followUpForm");
   const button = $("#followUpButton");
-  const appendButton = $("#followUpAppendButton");
+  const interruptButton = $("#followUpInterruptButton");
   const hint = $("#followUpHint");
   const input = $("#followUpInput");
   const modeSelect = $("#followUpModeSelect");
@@ -807,6 +915,7 @@ function updateFollowUpComposer(job) {
     form.classList.add("hidden");
     input.value = "";
     followUpBoundJobId = "";
+    updateComposerDock();
     return;
   }
 
@@ -825,12 +934,13 @@ function updateFollowUpComposer(job) {
 
   if (!canFollowUp(job)) {
     button.disabled = true;
-    if (appendButton) {
-      appendButton.disabled = true;
-      appendButton.classList.add("hidden");
+    if (interruptButton) {
+      interruptButton.disabled = true;
+      interruptButton.classList.add("hidden");
     }
     input.disabled = true;
     hint.textContent = t("session.followUpHintNoAgent");
+    updateComposerDock();
     return;
   }
 
@@ -838,12 +948,13 @@ function updateFollowUpComposer(job) {
   button.disabled = false;
   button.textContent = busy ? t("session.followUpQueue") : t("session.followUpSend");
   input.disabled = false;
-  if (appendButton) {
-    appendButton.classList.toggle("hidden", !busy);
-    appendButton.disabled = !busy;
-    appendButton.textContent = t("session.followUpAppend");
+  if (interruptButton) {
+    interruptButton.classList.toggle("hidden", !busy);
+    interruptButton.disabled = !busy;
+    interruptButton.textContent = t("session.followUpInterrupt");
   }
   hint.textContent = busy ? t("session.followUpHintBusy") : t("session.followUpHintReady");
+  updateComposerDock();
 }
 
 function updateStopButton(job) {
@@ -932,6 +1043,10 @@ function buildChatMessages(job) {
   return messages;
 }
 
+function isChatNearBottom(output) {
+  return output.scrollHeight - output.scrollTop - output.clientHeight < 80;
+}
+
 function renderChatMessages(job) {
   const output = $("#chatOutput");
   if (!job) {
@@ -945,7 +1060,7 @@ function renderChatMessages(job) {
     return;
   }
 
-  const wasNearBottom = output.scrollHeight - output.scrollTop - output.clientHeight < 80;
+  const wasNearBottom = isChatNearBottom(output);
 
   output.innerHTML = messages
     .map((message) => {
@@ -989,24 +1104,39 @@ function renderChatMessages(job) {
     })
     .join("");
 
-  if (wasNearBottom || !output.dataset.ready) {
+  const fab = $("#newMessagesFab");
+  if (wasNearBottom || state.chatPinnedToBottom) {
     output.scrollTop = output.scrollHeight;
-    output.dataset.ready = "1";
+    state.chatPinnedToBottom = true;
+    fab?.classList.add("hidden");
+  } else {
+    fab?.classList.remove("hidden");
   }
 }
 
 function renderCurrentJob(job) {
   state.currentJob = job || null;
+  const empty = $("#sessionEmpty");
+  const summary = $("#currentJob");
+  const chat = $("#chatOutput");
 
   if (!job) {
-    $("#currentJob").textContent = t("session.empty");
+    empty?.classList.remove("hidden");
+    summary?.classList.add("hidden");
+    chat?.classList.add("hidden");
+    summary.innerHTML = "";
     renderChatMessages(null);
     updateFollowUpComposer(null);
     updateStopButton(null);
+    updateContextHeader(null);
     return;
   }
 
-  $("#currentJob").innerHTML = `
+  empty?.classList.add("hidden");
+  summary?.classList.remove("hidden");
+  chat?.classList.remove("hidden");
+
+  summary.innerHTML = `
     <strong>${escapeHtml(job.project.name)}</strong>
     <span class="status status-${job.status}">${statusText(job.status)}</span>
     ${modeBadge(job.mode)}
@@ -1016,6 +1146,7 @@ function renderCurrentJob(job) {
   renderChatMessages(job);
   updateFollowUpComposer(job);
   updateStopButton(job);
+  updateContextHeader(job);
 }
 
 let currentJobPollInFlight = false;
@@ -1062,6 +1193,7 @@ async function submitFollowUp(prompt, jobId, delivery = "queue") {
 
   state.followUpDrafts.delete(job.id);
   state.currentJobId = updated.id;
+  state.chatPinnedToBottom = true;
   renderCurrentJob(updated);
   $("#followUpInput").value = "";
   await refreshData();
@@ -1072,7 +1204,7 @@ async function refreshData() {
   const [projectsData, jobsData] = await Promise.all([api("/api/projects"), api("/api/jobs")]);
   state.projects = projectsData.projects;
   state.jobs = jobsData.jobs;
-  renderProjects();
+  renderProjectList();
   renderJobs();
   void loadModels();
 
@@ -1124,6 +1256,55 @@ async function stopCurrentJob() {
   }
 }
 
+function openNewTaskSheet() {
+  ensureSelectedProject();
+  updateNewTaskProjectLabel();
+  setModeSelect($("#modeSelect"), loadSavedMode());
+  applyModelSelection("submit", loadSavedModel());
+  openSheet("newTaskSheet");
+  window.setTimeout(() => $("#promptInput")?.focus(), 120);
+}
+
+async function submitNewJob() {
+  const prompt = $("#promptInput").value.trim();
+  const projectId = state.selectedProjectId;
+
+  if (!projectId) {
+    showToast(t("toast.selectProject"));
+    switchTab("projects");
+    return;
+  }
+  if (!prompt) {
+    showToast(t("toast.enterPrompt"));
+    return;
+  }
+
+  $("#submitJobButton").disabled = true;
+  try {
+    const mode = getModeFromSelect($("#modeSelect"));
+    const model = collectModelSelection("submit");
+    saveMode(mode);
+    saveModelSelection(model);
+
+    const { job } = await api("/api/jobs", {
+      method: "POST",
+      body: JSON.stringify({ projectId, prompt, mode, model }),
+    });
+    state.currentJobId = job.id;
+    state.chatPinnedToBottom = true;
+    closeSheet("newTaskSheet");
+    switchTab("session");
+    renderCurrentJob(job);
+    $("#promptInput").value = "";
+    await refreshData();
+    startPollingCurrentJob();
+  } catch (error) {
+    showToast(error.message);
+  } finally {
+    $("#submitJobButton").disabled = false;
+  }
+}
+
 async function bootstrap() {
   if (window.__crcSession?.csrfToken) {
     state.csrfToken = window.__crcSession.csrfToken;
@@ -1142,7 +1323,6 @@ async function bootstrap() {
   }
 }
 
-/** 供 boot.js 在登录成功后调用 */
 export async function onBootAuthenticated(session) {
   state.csrfToken = session?.csrfToken || "";
   if (!session?.sessionToken) {
@@ -1163,6 +1343,8 @@ export async function onBootAuthenticated(session) {
 
   stripCredentialsFromUrl();
   setLoggedIn(true);
+  state.selectedProjectId = loadSavedProjectId();
+  switchTab(loadSavedTab());
   await ensureMarkdownLibs().catch(() => {});
   await refreshData();
 }
@@ -1172,7 +1354,6 @@ window.__crcApp = {
   refreshData: () => refreshData(),
 };
 
-// 登录由 boot.js 负责；这里仅作模块单独打开时的备用
 on("#loginForm", "submit", async (event) => {
   if (event.defaultPrevented) return;
   event.preventDefault();
@@ -1197,9 +1378,9 @@ on("#loginForm", "submit", async (event) => {
   }
 });
 
-// logout 已由 boot.js 绑定；避免重复请求
 if (!$("#logoutButton")?.dataset.bootBound) {
   on("#logoutButton", "click", async () => {
+    closeAllSheets();
     await api("/api/logout", { method: "POST", body: "{}" }).catch(() => {});
     state.csrfToken = "";
     window.__crcSession = null;
@@ -1207,23 +1388,26 @@ if (!$("#logoutButton")?.dataset.bootBound) {
   });
 }
 
-on("#refreshButton", "click", () => {
-  refreshData().catch((error) => showToast(error.message));
-});
-
 on("#stopJobButton", "click", () => {
   stopCurrentJob().catch((error) => showToast(error.message));
 });
 
-on("#projectSearchInput", "input", renderProjects);
+on("#projectSearchInput", "input", renderProjectList);
+
+on("#projectList", "click", (event) => {
+  const item = event.target.closest("[data-project-id]");
+  if (!item) return;
+  saveSelectedProjectId(item.dataset.projectId);
+  renderProjectList();
+});
 
 on("#browseOpenButton", "click", async () => {
-  setBrowsePanelOpen(true);
+  setBrowseOverlayOpen(true);
   await loadBrowse(null);
 });
 
 on("#browseCloseButton", "click", () => {
-  setBrowsePanelOpen(false);
+  setBrowseOverlayOpen(false);
 });
 
 on("#browseUpButton", "click", async () => {
@@ -1231,7 +1415,6 @@ on("#browseUpButton", "click", async () => {
     await loadBrowse(state.browse.parentPath);
     return;
   }
-  // 已在某个允许根目录顶层，或没有上级时，回到根列表
   await loadBrowse(null);
 });
 
@@ -1245,43 +1428,32 @@ on("#browseList", "click", async (event) => {
   await loadBrowse(item.dataset.browsePath);
 });
 
-on("#submitJobButton", "click", async () => {
-  const prompt = $("#promptInput").value.trim();
-  const projectId = $("#projectSelect").value;
-  const parentJobId = $("#parentJobSelect").value || undefined;
+on("#submitJobButton", "click", () => {
+  submitNewJob().catch((error) => showToast(error.message));
+});
 
-  if (!projectId) {
-    showToast(t("toast.selectProject"));
-    return;
-  }
-  if (!prompt) {
-    showToast(t("toast.enterPrompt"));
-    return;
-  }
+on("#headerNewTaskButton", "click", openNewTaskSheet);
+on("#sessionNewTaskButton", "click", openNewTaskSheet);
 
-  $("#submitJobButton").disabled = true;
-  try {
-    const mode = getModeFromSelect($("#modeSelect"));
-    const model = collectModelSelection("submit");
-    saveMode(mode);
-    saveModelSelection(model);
+on("#newTaskChangeProjectButton", "click", () => {
+  closeSheet("newTaskSheet");
+  switchTab("projects");
+});
 
-    const { job } = await api("/api/jobs", {
-      method: "POST",
-      body: JSON.stringify({ projectId, prompt, parentJobId, mode, model }),
-    });
-    state.currentJobId = job.id;
-    setPanelExpanded("submit", false);
-    setPanelExpanded("session", true);
-    renderCurrentJob(job);
-    $("#promptInput").value = "";
-    await refreshData();
-    startPollingCurrentJob();
-  } catch (error) {
-    showToast(error.message);
-  } finally {
-    $("#submitJobButton").disabled = false;
+on("#settingsButton", "click", () => openSheet("settingsSheet"));
+
+document.addEventListener("click", (event) => {
+  const closeTarget = event.target.closest("[data-sheet-close]");
+  if (closeTarget) {
+    const sheetId = closeTarget.dataset.sheetClose;
+    if (sheetId) closeSheet(sheetId);
   }
+});
+
+on("#bottomNav", "click", (event) => {
+  const button = event.target.closest(".nav-item");
+  if (!button) return;
+  switchTab(button.dataset.tab);
 });
 
 on("#followUpForm", "submit", async (event) => {
@@ -1293,9 +1465,9 @@ on("#followUpForm", "submit", async (event) => {
   }
 
   const button = $("#followUpButton");
-  const appendButton = $("#followUpAppendButton");
+  const interruptButton = $("#followUpInterruptButton");
   if (button) button.disabled = true;
-  if (appendButton) appendButton.disabled = true;
+  if (interruptButton) interruptButton.disabled = true;
   try {
     await submitFollowUp(prompt, state.currentJobId, "queue");
   } catch (error) {
@@ -1305,7 +1477,7 @@ on("#followUpForm", "submit", async (event) => {
   }
 });
 
-on("#followUpAppendButton", "click", async () => {
+on("#followUpInterruptButton", "click", async () => {
   const prompt = $("#followUpInput")?.value.trim();
   if (!prompt) {
     showToast(t("toast.enterFollowUp"));
@@ -1313,9 +1485,9 @@ on("#followUpAppendButton", "click", async () => {
   }
 
   const button = $("#followUpButton");
-  const appendButton = $("#followUpAppendButton");
+  const interruptButton = $("#followUpInterruptButton");
   if (button) button.disabled = true;
-  if (appendButton) appendButton.disabled = true;
+  if (interruptButton) interruptButton.disabled = true;
   try {
     await submitFollowUp(prompt, state.currentJobId, "interrupt");
   } catch (error) {
@@ -1343,33 +1515,49 @@ on("#followUpInput", "input", (event) => {
   }
 });
 
-on("#appView", "click", (event) => {
-  const toggle = event.target.closest("[data-panel-toggle]");
-  if (!toggle || !event.currentTarget.contains(toggle)) return;
-  event.preventDefault();
-  togglePanel(toggle.dataset.panelToggle);
-});
-
 on("#modeSelect", "change", (event) => {
   saveMode(getModeFromSelect(event.currentTarget));
+  syncModeSegmentFromSelect();
 });
 
 on("#followUpModeSelect", "change", (event) => {
   saveMode(getModeFromSelect(event.currentTarget));
 });
 
+document.querySelector(".mode-segment")?.addEventListener("click", (event) => {
+  const button = event.target.closest(".mode-segment-btn");
+  if (!button) return;
+  syncModeSelectFromSegment(button.dataset.mode === "plan" ? "plan" : "agent");
+});
+
 on("#jobList", "click", async (event) => {
   const item = event.target.closest(".job-item");
   if (!item) return;
 
-  const clickedId = item.dataset.jobId;
-  state.currentJobId = clickedId;
-  setPanelExpanded("session", true);
+  state.currentJobId = item.dataset.jobId;
+  state.chatPinnedToBottom = true;
+  switchTab("session");
 
   const chatOutput = $("#chatOutput");
   if (chatOutput) delete chatOutput.dataset.ready;
   await refreshCurrentJob();
   renderJobs();
+});
+
+on("#chatOutput", "scroll", () => {
+  const output = $("#chatOutput");
+  if (!output) return;
+  const nearBottom = isChatNearBottom(output);
+  state.chatPinnedToBottom = nearBottom;
+  $("#newMessagesFab")?.classList.toggle("hidden", nearBottom);
+});
+
+on("#newMessagesFab", "click", () => {
+  const output = $("#chatOutput");
+  if (!output) return;
+  state.chatPinnedToBottom = true;
+  output.scrollTop = output.scrollHeight;
+  $("#newMessagesFab")?.classList.add("hidden");
 });
 
 function isStandaloneDisplay() {
@@ -1397,7 +1585,6 @@ function updateInstallButtonVisibility() {
     return;
   }
 
-  // Chromium 收到 beforeinstallprompt 后显示；iOS 永不触发该事件，改为常驻安装引导
   if (state.installPromptEvent || isIosSafari()) {
     button.classList.remove("hidden");
     return;
@@ -1442,7 +1629,6 @@ on("#installButton", "click", async () => {
 async function registerServiceWorker() {
   if (!("serviceWorker" in navigator)) return;
 
-  // 注销掉带 ?v= 的旧注册，避免旧 SW 长期控制页面导致登录脚本失效
   const registrations = await navigator.serviceWorker.getRegistrations();
   await Promise.all(
     registrations.map(async (registration) => {
@@ -1477,10 +1663,14 @@ $("#langSwitch")?.addEventListener("click", (event) => {
   applyLocale(next);
 });
 
+const versionEl = document.querySelector("#appVersion");
+const loginVersionEl = document.querySelector("#loginAppVersion");
+if (versionEl) versionEl.textContent = `v${APP_VERSION}`;
+if (loginVersionEl) loginVersionEl.textContent = `v${APP_VERSION}`;
+
 stripCredentialsFromUrl();
 applyDomI18n();
 updateLangSwitch();
-applyPanelState();
 updateInstallButtonVisibility();
 setModeSelect($("#modeSelect"), loadSavedMode());
 bindModelSettings("submit");
@@ -1490,7 +1680,6 @@ ensureMarkdownLibs().catch((error) => {
   console.warn("Markdown 组件加载失败", error);
 });
 
-// 有 boot.js 时由 boot 在登录后调用 onBootAuthenticated，避免抢跑导致未带令牌请求
 if (!window.__crcBootManaged) {
   bootstrap().catch((error) => {
     console.error("初始化失败", error);

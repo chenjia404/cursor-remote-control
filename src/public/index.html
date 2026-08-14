@@ -2,7 +2,7 @@
 <html lang="zh-CN">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
     <meta name="theme-color" content="#0f172a" />
     <meta name="mobile-web-app-capable" content="yes" />
     <meta name="apple-mobile-web-app-capable" content="yes" />
@@ -12,26 +12,15 @@
     <link rel="icon" href="/icons/icon-192.png" type="image/png" sizes="192x192" />
     <link rel="icon" href="/icons/icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" sizes="180x180" />
-    <link rel="stylesheet" href="/styles.css?v=0.2.20" />
+    <link rel="stylesheet" href="/styles.css?v=0.2.21" />
   </head>
   <body>
     <main class="shell">
-      <section class="card header-card">
-        <div>
-          <p class="eyebrow">Cursor Remote Control <span id="appVersion" class="version">v0.2.18</span></p>
+      <section id="loginView" class="card login-card">
+        <div class="login-brand">
+          <p class="eyebrow">Cursor Remote Control <span id="loginAppVersion" class="version">v0.2.21</span></p>
           <h1 data-i18n="header.title">远程控制台</h1>
         </div>
-        <div class="header-actions">
-          <div id="langSwitch" class="lang-switch" role="group" data-i18n-aria="header.lang">
-            <button type="button" class="lang-option" data-lang="zh">中</button>
-            <button type="button" class="lang-option" data-lang="en">EN</button>
-          </div>
-          <button id="installButton" class="ghost hidden" data-i18n="header.install">安装</button>
-          <button id="logoutButton" class="ghost hidden" data-i18n="header.logout">退出</button>
-        </div>
-      </section>
-
-      <section id="loginView" class="card">
         <h2 data-i18n="login.title">登录</h2>
         <form id="loginForm" class="stack" method="dialog" autocomplete="on">
           <label>
@@ -46,125 +35,84 @@
         </form>
       </section>
 
-      <section id="appView" class="hidden">
-        <section class="card stack collapsible-card" data-panel="submit">
-          <div class="row card-toolbar">
+      <div id="appView" class="app-shell hidden">
+        <header class="context-header" id="contextHeader">
+          <div class="context-main">
+            <p class="context-eyebrow" id="contextEyebrow" data-i18n="nav.session">当前会话</p>
+            <div id="contextMeta" class="context-meta">
+              <strong id="contextTitle" data-i18n="session.empty">暂无任务</strong>
+              <span id="contextStatus" class="status hidden"></span>
+            </div>
+          </div>
+          <div class="context-actions">
+            <button id="stopJobButton" class="ghost danger small hidden" type="button" data-i18n="session.stop">停止</button>
+            <button id="headerNewTaskButton" class="ghost small" type="button" data-i18n="task.new">新建任务</button>
             <button
+              id="settingsButton"
+              class="ghost icon-btn"
               type="button"
-              class="collapse-toggle"
-              data-panel-toggle="submit"
-              aria-expanded="true"
-              aria-controls="panel-submit"
+              data-i18n-aria="settings.title"
+              aria-label="设置"
             >
-              <span class="collapse-chevron" aria-hidden="true"></span>
-              <span class="collapse-title" data-i18n="submit.title">提交任务</span>
+              ⚙
             </button>
-            <button id="refreshButton" class="ghost" data-i18n="submit.refresh">刷新</button>
           </div>
-          <div id="panel-submit" class="card-body stack">
-          <div class="project-picker">
-            <div class="row project-picker-header">
-              <h3 class="section-title" data-i18n="submit.project">项目</h3>
-              <button id="browseOpenButton" class="ghost" type="button" data-i18n="submit.browseOpen">按目录打开</button>
-            </div>
-            <label>
-              <span data-i18n="submit.searchLabel">搜索已选项目</span>
-              <input
-                id="projectSearchInput"
-                type="search"
-                data-i18n-placeholder="submit.searchPlaceholder"
-                placeholder="输入项目名或路径过滤"
-                autocomplete="off"
-              />
-            </label>
-            <label>
-              <span data-i18n="submit.selectedLabel">已选项目</span>
-              <select id="projectSelect"></select>
-            </label>
-            <p id="projectSelectHint" class="hint" data-i18n="submit.projectHint">
-              下拉列表只显示已确认过的项目。新项目请点「按目录打开」浏览并确认。
-            </p>
-          </div>
+        </header>
 
-          <div id="browsePanel" class="browse-panel hidden">
-            <div class="row project-picker-header">
-              <h3 class="section-title" data-i18n="submit.browseTitle">按目录打开</h3>
-              <button id="browseCloseButton" class="ghost" type="button" data-i18n="submit.browseClose">关闭</button>
+        <div class="tab-panels" id="tabPanels">
+          <section id="tabSession" class="tab-panel active" data-tab="session">
+            <div id="sessionEmpty" class="session-empty">
+              <p data-i18n="session.emptyGuide">选择历史任务，或新建任务开始对话。</p>
+              <button id="sessionNewTaskButton" type="button" data-i18n="task.new">新建任务</button>
             </div>
-            <p id="browsePath" class="browse-path meta" data-i18n="submit.browseRootHint">选择允许的根目录开始浏览</p>
-            <div class="browse-toolbar">
-              <button id="browseUpButton" class="ghost" type="button" disabled data-i18n="submit.browseUp">上级目录</button>
-              <button id="browseSelectButton" class="ghost" type="button" disabled data-i18n="submit.browseConfirm">
-                确认当前目录为项目
+            <div id="currentJob" class="session-summary hidden"></div>
+            <div id="chatOutput" class="chat hidden"></div>
+            <button id="newMessagesFab" class="new-messages-fab hidden" type="button" data-i18n="session.newMessages">
+              ↓ 新消息
+            </button>
+          </section>
+
+          <section id="tabHistory" class="tab-panel hidden" data-tab="history" hidden>
+            <div id="jobList" class="job-list"></div>
+          </section>
+
+          <section id="tabProjects" class="tab-panel hidden" data-tab="projects" hidden>
+            <div class="projects-panel stack">
+              <label>
+                <span data-i18n="submit.searchLabel">搜索项目</span>
+                <input
+                  id="projectSearchInput"
+                  type="search"
+                  data-i18n-placeholder="submit.searchPlaceholder"
+                  placeholder="输入项目名或路径过滤"
+                  autocomplete="off"
+                />
+              </label>
+              <div id="projectList" class="project-list"></div>
+              <button id="browseOpenButton" class="ghost browse-open-btn" type="button" data-i18n="submit.browseOpen">
+                浏览目录
               </button>
+              <p id="projectSelectHint" class="hint" data-i18n="submit.projectHint">
+                列表显示已确认过的项目。新项目请点「浏览目录」添加。
+              </p>
             </div>
-            <div id="browseList" class="browse-list"></div>
-          </div>
-          <label>
-            <span data-i18n="submit.parentLabel">继续已有任务（可选）</span>
-            <select id="parentJobSelect">
-              <option value="" data-i18n="submit.newSession">新建会话</option>
-            </select>
-          </label>
-          <label>
-            <span data-i18n="submit.mode">模式</span>
-            <select id="modeSelect">
-              <option value="agent" data-i18n="submit.modeAgent">Agent（执行）</option>
-              <option value="plan" data-i18n="submit.modePlan">Plan（规划）</option>
-            </select>
-          </label>
-          <div class="model-settings">
-            <label>
-              <span data-i18n="submit.model">模型</span>
-              <select id="modelSelect"></select>
-            </label>
-            <div id="modelParams" class="model-params"></div>
-            <p class="hint" data-i18n="submit.modelHint">思考强度、速度等选项会随所选模型变化。</p>
-          </div>
-          <label>
-            <span data-i18n="submit.prompt">指令</span>
-            <textarea
-              id="promptInput"
-              rows="8"
-              data-i18n-placeholder="submit.promptPlaceholder"
-              placeholder="例如：检查这个项目的登录页面问题并修复，完成后运行相关检查。"
-            ></textarea>
-          </label>
-          <button id="submitJobButton" data-i18n="submit.button">让 Cursor 修改</button>
-          <p class="hint" data-i18n="submit.shellHint">控制台不会提供任意 Shell，仅把任务提交给 Cursor Agent。</p>
-          </div>
-        </section>
+          </section>
+        </div>
 
-        <section class="card current-job-card collapsible-card" data-panel="session">
-          <div class="row card-toolbar">
-            <button
-              type="button"
-              class="collapse-toggle"
-              data-panel-toggle="session"
-              aria-expanded="true"
-              aria-controls="panel-session"
-            >
-              <span class="collapse-chevron" aria-hidden="true"></span>
-              <span class="collapse-title" data-i18n="session.title">会话详情</span>
-            </button>
-            <button id="stopJobButton" class="ghost danger hidden" type="button" data-i18n="session.stop">停止</button>
-          </div>
-          <div id="panel-session" class="card-body current-job-body">
-          <div id="currentJob" class="empty">暂无任务</div>
-          <div id="chatOutput" class="chat"></div>
-          <form id="followUpForm" class="follow-up-composer hidden">
+        <div id="followUpDock" class="follow-up-dock hidden">
+          <form id="followUpForm" class="follow-up-composer">
             <div class="follow-up-settings">
-            <label class="follow-up-mode">
-              <span data-i18n="session.followUpMode">模式</span>
-              <select id="followUpModeSelect">
-                <option value="agent" data-i18n="submit.modeAgent">Agent（执行）</option>
-                <option value="plan" data-i18n="submit.modePlan">Plan（规划）</option>
-              </select>
-            </label>
-            <label class="follow-up-mode">
-              <span data-i18n="submit.model">模型</span>
-              <select id="followUpModelSelect"></select>
-            </label>
+              <label class="follow-up-mode">
+                <span data-i18n="session.followUpMode">模式</span>
+                <select id="followUpModeSelect">
+                  <option value="agent" data-i18n="submit.modeAgent">Agent（执行）</option>
+                  <option value="plan" data-i18n="submit.modePlan">Plan（规划）</option>
+                </select>
+              </label>
+              <label class="follow-up-mode">
+                <span data-i18n="submit.model">模型</span>
+                <select id="followUpModelSelect"></select>
+              </label>
             </div>
             <div id="followUpModelParams" class="model-params compact"></div>
             <textarea
@@ -177,41 +125,129 @@
               <span id="followUpHint" class="hint" data-i18n="session.followUpHint">在同一任务中继续对话</span>
               <div class="follow-up-buttons">
                 <button
-                  id="followUpAppendButton"
+                  id="followUpInterruptButton"
                   class="ghost hidden"
                   type="button"
-                  data-i18n="session.followUpAppend"
+                  data-i18n="session.followUpInterrupt"
                 >
-                  追加
+                  立即执行
                 </button>
                 <button id="followUpButton" type="submit" data-i18n="session.followUpSend">发送</button>
               </div>
             </div>
           </form>
-          </div>
-        </section>
+        </div>
 
-        <section class="card collapsible-card is-collapsed" data-panel="history">
-          <div class="row card-toolbar">
-            <button
-              type="button"
-              class="collapse-toggle"
-              data-panel-toggle="history"
-              aria-expanded="false"
-              aria-controls="panel-history"
-            >
-              <span class="collapse-chevron" aria-hidden="true"></span>
-              <span class="collapse-title" data-i18n="history.title">历史任务</span>
+        <nav class="bottom-nav" id="bottomNav" role="tablist" data-i18n-aria="nav.main">
+          <button type="button" class="nav-item active" data-tab="session" role="tab" aria-selected="true">
+            <span class="nav-icon" aria-hidden="true">💬</span>
+            <span data-i18n="nav.session">会话</span>
+          </button>
+          <button type="button" class="nav-item" data-tab="history" role="tab" aria-selected="false">
+            <span class="nav-icon" aria-hidden="true">🕘</span>
+            <span data-i18n="nav.history">历史</span>
+          </button>
+          <button type="button" class="nav-item" data-tab="projects" role="tab" aria-selected="false">
+            <span class="nav-icon" aria-hidden="true">📁</span>
+            <span data-i18n="nav.projects">项目</span>
+          </button>
+        </nav>
+      </div>
+
+      <div id="newTaskSheet" class="sheet hidden" aria-hidden="true">
+        <div class="sheet-backdrop" data-sheet-close="newTaskSheet"></div>
+        <div class="sheet-panel" role="dialog" aria-modal="true" data-i18n-aria="task.new">
+          <div class="sheet-header">
+            <h2 data-i18n="task.new">新建任务</h2>
+            <button type="button" class="ghost icon-btn sheet-close" data-sheet-close="newTaskSheet" aria-label="关闭">✕</button>
+          </div>
+          <div class="sheet-body stack">
+            <div class="sheet-project-row">
+              <div>
+                <span class="sheet-label" data-i18n="submit.project">项目</span>
+                <p id="newTaskProjectName" class="sheet-project-name" data-i18n="project.noneSelected">暂无已选项目</p>
+              </div>
+              <button id="newTaskChangeProjectButton" type="button" class="ghost small" data-i18n="task.changeProject">
+                更换
+              </button>
+            </div>
+            <div class="mode-segment" role="group" data-i18n-aria="submit.mode">
+              <button type="button" class="mode-segment-btn active" data-mode="agent" data-i18n="submit.modeAgent">Agent</button>
+              <button type="button" class="mode-segment-btn" data-mode="plan" data-i18n="submit.modePlan">Plan</button>
+            </div>
+            <select id="modeSelect" class="hidden" aria-hidden="true">
+              <option value="agent">agent</option>
+              <option value="plan">plan</option>
+            </select>
+            <div class="model-settings">
+              <label>
+                <span data-i18n="submit.model">模型</span>
+                <select id="modelSelect"></select>
+              </label>
+              <div id="modelParams" class="model-params"></div>
+              <p class="hint" data-i18n="submit.modelHint">思考强度、速度等选项会随所选模型变化。</p>
+            </div>
+            <label>
+              <span data-i18n="submit.prompt">指令</span>
+              <textarea
+                id="promptInput"
+                rows="6"
+                data-i18n-placeholder="submit.promptPlaceholder"
+                placeholder="例如：检查这个项目的登录页面问题并修复，完成后运行相关检查。"
+              ></textarea>
+            </label>
+            <button id="submitJobButton" type="button" data-i18n="task.start">开始执行</button>
+            <p class="hint" data-i18n="submit.shellHint">控制台不会提供任意 Shell，仅把任务提交给 Cursor Agent。</p>
+          </div>
+        </div>
+      </div>
+
+      <div id="settingsSheet" class="sheet hidden" aria-hidden="true">
+        <div class="sheet-backdrop" data-sheet-close="settingsSheet"></div>
+        <div class="sheet-panel" role="dialog" aria-modal="true" data-i18n-aria="settings.title">
+          <div class="sheet-header">
+            <h2 data-i18n="settings.title">设置</h2>
+            <button type="button" class="ghost icon-btn sheet-close" data-sheet-close="settingsSheet" aria-label="关闭">✕</button>
+          </div>
+          <div class="sheet-body stack">
+            <div class="settings-row">
+              <span data-i18n="header.lang">语言</span>
+              <div id="langSwitch" class="lang-switch" role="group" data-i18n-aria="header.lang">
+                <button type="button" class="lang-option" data-lang="zh">中</button>
+                <button type="button" class="lang-option" data-lang="en">EN</button>
+              </div>
+            </div>
+            <button id="installButton" class="ghost hidden" type="button" data-i18n="header.install">安装到主屏幕</button>
+            <button id="logoutButton" class="ghost danger" type="button" data-i18n="header.logout">退出登录</button>
+            <p class="hint settings-version">
+              <span data-i18n="settings.version">版本</span>
+              <span id="appVersion" class="version">v0.2.21</span>
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div id="browseOverlay" class="overlay hidden" aria-hidden="true">
+        <div class="overlay-panel browse-overlay">
+          <div class="overlay-header">
+            <h2 data-i18n="submit.browseTitle">浏览目录</h2>
+            <button id="browseCloseButton" type="button" class="ghost icon-btn sheet-close" data-i18n="submit.browseClose">
+              关闭
             </button>
           </div>
-          <div id="panel-history" class="card-body">
-          <div id="jobList" class="job-list"></div>
+          <p id="browsePath" class="browse-path meta" data-i18n="submit.browseRootHint">选择允许的根目录开始浏览</p>
+          <div class="browse-toolbar">
+            <button id="browseUpButton" class="ghost" type="button" disabled data-i18n="submit.browseUp">上级目录</button>
+            <button id="browseSelectButton" class="ghost" type="button" disabled data-i18n="submit.browseConfirm">
+              确认当前目录为项目
+            </button>
           </div>
-        </section>
-      </section>
+          <div id="browseList" class="browse-list"></div>
+        </div>
+      </div>
 
       <div id="toast" class="toast hidden"></div>
     </main>
-    <script src="/boot.js?v=0.2.20"></script>
+    <script src="/boot.js?v=0.2.21"></script>
   </body>
 </html>
