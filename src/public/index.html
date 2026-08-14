@@ -12,13 +12,13 @@
     <link rel="icon" href="/icons/icon-192.png" type="image/png" sizes="192x192" />
     <link rel="icon" href="/icons/icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" sizes="180x180" />
-    <link rel="stylesheet" href="/styles.css?v=0.2.13" />
+    <link rel="stylesheet" href="/styles.css?v=0.2.17" />
   </head>
   <body>
     <main class="shell">
       <section class="card header-card">
         <div>
-          <p class="eyebrow">Cursor Remote Control <span id="appVersion" class="version">v0.2.13</span></p>
+          <p class="eyebrow">Cursor Remote Control <span id="appVersion" class="version">v0.2.17</span></p>
           <h1 data-i18n="header.title">远程控制台</h1>
         </div>
         <div class="header-actions">
@@ -47,11 +47,21 @@
       </section>
 
       <section id="appView" class="hidden">
-        <section class="card stack">
-          <div class="row">
-            <h2 data-i18n="submit.title">提交任务</h2>
+        <section class="card stack collapsible-card" data-panel="submit">
+          <div class="row card-toolbar">
+            <button
+              type="button"
+              class="collapse-toggle"
+              data-panel-toggle="submit"
+              aria-expanded="true"
+              aria-controls="panel-submit"
+            >
+              <span class="collapse-chevron" aria-hidden="true"></span>
+              <span class="collapse-title" data-i18n="submit.title">提交任务</span>
+            </button>
             <button id="refreshButton" class="ghost" data-i18n="submit.refresh">刷新</button>
           </div>
+          <div id="panel-submit" class="card-body stack">
           <div class="project-picker">
             <div class="row project-picker-header">
               <h3 class="section-title" data-i18n="submit.project">项目</h3>
@@ -103,6 +113,14 @@
               <option value="plan" data-i18n="submit.modePlan">Plan（规划）</option>
             </select>
           </label>
+          <div class="model-settings">
+            <label>
+              <span data-i18n="submit.model">模型</span>
+              <select id="modelSelect"></select>
+            </label>
+            <div id="modelParams" class="model-params"></div>
+            <p class="hint" data-i18n="submit.modelHint">思考强度、速度等选项会随所选模型变化。</p>
+          </div>
           <label>
             <span data-i18n="submit.prompt">指令</span>
             <textarea
@@ -114,16 +132,28 @@
           </label>
           <button id="submitJobButton" data-i18n="submit.button">让 Cursor 修改</button>
           <p class="hint" data-i18n="submit.shellHint">控制台不会提供任意 Shell，仅把任务提交给 Cursor Agent。</p>
+          </div>
         </section>
 
-        <section class="card current-job-card">
-          <div class="row">
-            <h2 data-i18n="session.title">会话详情</h2>
+        <section class="card current-job-card collapsible-card" data-panel="session">
+          <div class="row card-toolbar">
+            <button
+              type="button"
+              class="collapse-toggle"
+              data-panel-toggle="session"
+              aria-expanded="true"
+              aria-controls="panel-session"
+            >
+              <span class="collapse-chevron" aria-hidden="true"></span>
+              <span class="collapse-title" data-i18n="session.title">会话详情</span>
+            </button>
             <button id="stopJobButton" class="ghost danger hidden" type="button" data-i18n="session.stop">停止</button>
           </div>
+          <div id="panel-session" class="card-body current-job-body">
           <div id="currentJob" class="empty">暂无任务</div>
           <div id="chatOutput" class="chat"></div>
           <form id="followUpForm" class="follow-up-composer hidden">
+            <div class="follow-up-settings">
             <label class="follow-up-mode">
               <span data-i18n="session.followUpMode">模式</span>
               <select id="followUpModeSelect">
@@ -131,6 +161,12 @@
                 <option value="plan" data-i18n="submit.modePlan">Plan（规划）</option>
               </select>
             </label>
+            <label class="follow-up-mode">
+              <span data-i18n="submit.model">模型</span>
+              <select id="followUpModelSelect"></select>
+            </label>
+            </div>
+            <div id="followUpModelParams" class="model-params compact"></div>
             <textarea
               id="followUpInput"
               rows="2"
@@ -138,20 +174,34 @@
               placeholder="继续安排这个任务…（Enter 发送，Shift+Enter 换行）"
             ></textarea>
             <div class="follow-up-actions">
-              <span id="followUpHint" class="hint" data-i18n="session.followUpHint">基于当前会话继续对话</span>
+              <span id="followUpHint" class="hint" data-i18n="session.followUpHint">在同一任务中继续对话</span>
               <button id="followUpButton" type="submit" data-i18n="session.followUpSend">发送</button>
             </div>
           </form>
+          </div>
         </section>
 
-        <section class="card">
-          <h2 data-i18n="history.title">历史任务</h2>
+        <section class="card collapsible-card is-collapsed" data-panel="history">
+          <div class="row card-toolbar">
+            <button
+              type="button"
+              class="collapse-toggle"
+              data-panel-toggle="history"
+              aria-expanded="false"
+              aria-controls="panel-history"
+            >
+              <span class="collapse-chevron" aria-hidden="true"></span>
+              <span class="collapse-title" data-i18n="history.title">历史任务</span>
+            </button>
+          </div>
+          <div id="panel-history" class="card-body">
           <div id="jobList" class="job-list"></div>
+          </div>
         </section>
       </section>
 
       <div id="toast" class="toast hidden"></div>
     </main>
-    <script src="/boot.js?v=0.2.13"></script>
+    <script src="/boot.js?v=0.2.17"></script>
   </body>
 </html>

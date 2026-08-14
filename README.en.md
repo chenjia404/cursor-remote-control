@@ -16,7 +16,7 @@ The UI supports Chinese and English. Use the language switcher in the top-right 
 - Listens on port `20267` by default.
 - Browse directories within `PROJECT_ROOTS` and confirm projects; the dropdown only lists confirmed projects.
 - Runs Agent tasks in the project directory via Cursor SDK local mode.
-- Persists job history, status, Agent ID, Run ID, and logs.
+- Persists job history, status, Agent ID, Run ID, and logs. One job is one conversation; follow-up messages stay on the same job.
 - PWA support so you can install it to the home screen from a mobile browser.
 - Chinese / English UI language switcher.
 - No arbitrary shell input; the web UI cannot run system commands directly.

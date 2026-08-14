@@ -1,7 +1,7 @@
 #Requires -Version 7
 <#
 .SYNOPSIS
-  注册 Windows 登录后自动启动（可延迟）。
+  注册 Windows 登录后自动启动守护进程（服务挂了会再拉起）。
 .PARAMETER DelaySeconds
   登录后延迟多少秒再启动，默认 60。
 .PARAMETER NodePath
@@ -22,7 +22,7 @@ if ($DelaySeconds -lt 0) {
 }
 
 $ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$StartScript = Join-Path $PSScriptRoot "start-server.ps1"
+$StartScript = Join-Path $PSScriptRoot "watchdog.ps1"
 $LogDir = Join-Path $ProjectRoot "data"
 $NodePathFile = Join-Path $LogDir "autostart-node-path.txt"
 $ServerEntry = Join-Path $ProjectRoot "dist\src\server.js"
@@ -96,6 +96,6 @@ Register-ScheduledTask `
 
 Write-Host "已注册计划任务: $TaskName"
 Write-Host "触发条件: 用户 $env:USERNAME 登录后延迟 ${DelaySeconds}s"
-Write-Host "启动脚本: $StartScript"
+Write-Host "启动脚本: $StartScript（守护进程，服务挂了会自动拉起）"
 Write-Host "取消自启: pnpm autostart:uninstall"
-Write-Host "立即试跑: pnpm autostart:start"
+Write-Host "立即挂上守护（不停现有服务）: pnpm autostart:watch"

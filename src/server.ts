@@ -14,8 +14,9 @@ import {
   verifyPassword,
 } from "./auth.js";
 import { assertRequiredConfig, config } from "./config.js";
-import { cancelCursorJob, runCursorJob } from "./cursorAgent.js";
-import { createJob, getJob, listJobs, loadJobs, recoverInterruptedJobs } from "./jobs.js";
+import { cancelCursorJob, resumeQueuedConversations, scheduleConversation } from "./cursorAgent.js";
+import { createJob, enqueueJobTurn, getJob, listJobs, loadJobs, recoverInterruptedJobs } from "./jobs.js";
+import { defaultModelSelection, listCursorModels, normalizeModelSelection } from "./models.js";
 import {
   browseDirectory,
   getProjectById,
@@ -31,11 +32,31 @@ const loginSchema = z.object({
   password: z.string().min(1),
 });
 
+const modelSelectionSchema = z.object({
+  id: z.string().min(1).max(80),
+  params: z
+    .array(
+      z.object({
+        id: z.string().min(1).max(64),
+        value: z.string().min(1).max(64),
+      }),
+    )
+    .max(16)
+    .optional(),
+});
+
 const createJobSchema = z.object({
   projectId: z.string().min(1),
   prompt: z.string().min(1).max(20000),
   parentJobId: z.string().uuid().optional(),
   mode: z.enum(["agent", "plan"]).optional(),
+  model: modelSelectionSchema.optional(),
+});
+
+const followUpSchema = z.object({
+  prompt: z.string().min(1).max(20000),
+  mode: z.enum(["agent", "plan"]).optional(),
+  model: modelSelectionSchema.optional(),
 });
 
 const browseSchema = z.object({
@@ -56,6 +77,10 @@ async function start(): Promise<void> {
   const recoveredCount = recoverInterruptedJobs();
   if (recoveredCount > 0) {
     console.warn(`已将 ${recoveredCount} 个因进程重启而中断的任务标记为失败`);
+  }
+  const resumedConversations = resumeQueuedConversations();
+  if (resumedConversations > 0) {
+    console.info(`已恢复 ${resumedConversations} 个会话中排队等待的任务`);
   }
 
   const app = Fastify({
@@ -150,6 +175,14 @@ async function start(): Promise<void> {
     projects: await listSelectedProjects(),
   }));
 
+  app.get("/api/models", { preHandler: requireAuth }, async () => {
+    const models = await listCursorModels();
+    return {
+      models,
+      defaultModel: defaultModelSelection(models),
+    };
+  });
+
   app.get("/api/projects/browse", { preHandler: requireAuth }, async (request, reply) => {
     const query = browseSchema.parse(request.query);
     try {
@@ -198,11 +231,30 @@ async function start(): Promise<void> {
   });
 
   app.post("/api/jobs", { preHandler: requireCsrf }, async (request, reply) => {
+    const catalog = await listCursorModels();
     const body = createJobSchema.parse(request.body);
-    const project = await getProjectById(body.projectId);
+    const model = normalizeModelSelection(body.model, catalog);
 
-    // 新建会话必须使用已确认项目；续聊可沿用历史任务中的项目路径
-    if (!body.parentJobId && !(await isProjectSelected(body.projectId))) {
+    // 提交区选择「继续已有任务」时，在同一任务内追加一轮，不新建任务
+    if (body.parentJobId) {
+      const parent = getJob(body.parentJobId);
+      if (!parent) {
+        reply.code(404).send({ error: "任务不存在" });
+        return;
+      }
+
+      const job = enqueueJobTurn(parent.id, {
+        prompt: body.prompt,
+        mode: body.mode ?? parent.mode ?? config.cursorDefaultMode,
+        model,
+      });
+      scheduleConversation(job.id);
+      reply.code(202).send({ job });
+      return;
+    }
+
+    const project = await getProjectById(body.projectId);
+    if (!(await isProjectSelected(body.projectId))) {
       reply.code(400).send({ error: "请先在「按目录打开」中确认该项目" });
       return;
     }
@@ -212,14 +264,30 @@ async function start(): Promise<void> {
       prompt: body.prompt,
       submittedBy: request.user?.username ?? config.adminUsername,
       sourceIp: getRequestIp(request.ip),
-      parentJobId: body.parentJobId,
       mode: body.mode ?? config.cursorDefaultMode,
+      model,
     });
 
-    runCursorJob(job.id).catch((error) => {
-      request.log.error({ error, jobId: job.id }, "任务后台执行失败");
-    });
+    scheduleConversation(job.id);
+    reply.code(202).send({ job });
+  });
 
+  app.post("/api/jobs/:id/messages", { preHandler: requireCsrf }, async (request, reply) => {
+    const params = z.object({ id: z.string().uuid() }).parse(request.params);
+    const catalog = await listCursorModels();
+    const body = followUpSchema.parse(request.body);
+    const existing = getJob(params.id);
+    if (!existing) {
+      reply.code(404).send({ error: "任务不存在" });
+      return;
+    }
+
+    const job = enqueueJobTurn(existing.id, {
+      prompt: body.prompt,
+      mode: body.mode ?? existing.mode ?? config.cursorDefaultMode,
+      model: normalizeModelSelection(body.model ?? existing.model, catalog),
+    });
+    scheduleConversation(job.id);
     reply.code(202).send({ job });
   });
 

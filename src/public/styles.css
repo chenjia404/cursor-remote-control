@@ -149,6 +149,59 @@ h2 {
   margin-bottom: 0.8rem;
 }
 
+.card-toolbar {
+  gap: 0.75rem;
+  margin: 0;
+}
+
+.collapse-toggle {
+  align-items: center;
+  background: transparent;
+  color: #f8fafc;
+  display: flex;
+  flex: 1;
+  gap: 0.6rem;
+  justify-content: flex-start;
+  min-width: 0;
+  padding: 0.2rem 0.15rem;
+  text-align: left;
+}
+
+.collapse-toggle:hover {
+  background: transparent;
+  color: #e0f2fe;
+}
+
+.collapse-title {
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+
+.collapse-chevron {
+  border-right: 2px solid currentColor;
+  border-bottom: 2px solid currentColor;
+  display: inline-block;
+  flex-shrink: 0;
+  height: 0.42rem;
+  margin-left: 0.15rem;
+  transform: rotate(45deg);
+  transition: transform 0.16s ease;
+  width: 0.42rem;
+}
+
+.collapsible-card.is-collapsed .collapse-chevron {
+  transform: rotate(-45deg);
+}
+
+.collapsible-card.is-collapsed .card-body {
+  display: none;
+}
+
+.current-job-body {
+  display: grid;
+  gap: 0.85rem;
+}
+
 label {
   color: #cbd5e1;
   display: block;
@@ -677,12 +730,43 @@ label {
   color: #c4b5fd;
 }
 
+.model-settings,
+.model-params {
+  display: grid;
+  gap: 0.85rem;
+}
+
+.model-params {
+  grid-template-columns: repeat(auto-fit, minmax(10.5rem, 1fr));
+}
+
+.model-params.compact {
+  gap: 0.55rem;
+}
+
+.follow-up-settings {
+  display: grid;
+  gap: 0.55rem;
+  grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+}
+
+.follow-up-composer .model-params label,
+.follow-up-mode {
+  font-size: 0.85rem;
+}
+
+.follow-up-composer .model-params select,
 .follow-up-mode select {
   border: 1px solid #334155;
   border-radius: 0.65rem;
   font-size: 0.9rem;
   margin-top: 0.25rem;
   padding: 0.55rem 0.65rem;
+}
+
+.model-badge {
+  background: rgba(148, 163, 184, 0.16);
+  color: #cbd5e1;
 }
 
 .toast {

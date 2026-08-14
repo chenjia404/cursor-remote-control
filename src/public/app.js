@@ -7,7 +7,7 @@ import {
   setLocale,
   t,
   translateApiError,
-} from "./i18n.js?v=0.2.13";
+} from "./i18n.js?v=0.2.17";
 
 let markedRef = null;
 let purifyRef = null;
@@ -50,6 +50,13 @@ const MODE_LABELS = {
 };
 
 const MODE_STORAGE_KEY = "cursor-rc-mode";
+const MODEL_STORAGE_KEY = "cursor-rc-model";
+const PANEL_STORAGE_KEY = "cursor-rc-panels";
+const DEFAULT_PANEL_EXPANDED = {
+  submit: true,
+  session: true,
+  history: false,
+};
 
 const state = {
   csrfToken: "",
@@ -69,6 +76,8 @@ const state = {
     entries: [],
     loading: false,
   },
+  models: [],
+  defaultModel: null,
 };
 
 initLocale();
@@ -109,6 +118,9 @@ function applyLocale(locale) {
   renderJobs();
   renderBrowsePanel();
   renderCurrentJob(state.currentJob);
+  applyPanelState();
+  renderModelSettings("submit");
+  renderModelSettings("followUp");
 }
 
 function loadSavedMode() {
@@ -129,6 +141,56 @@ function saveMode(mode) {
   }
 }
 
+function loadPanelState() {
+  const next = { ...DEFAULT_PANEL_EXPANDED };
+  try {
+    const raw = localStorage.getItem(PANEL_STORAGE_KEY);
+    if (!raw) return next;
+    const parsed = JSON.parse(raw);
+    for (const key of Object.keys(DEFAULT_PANEL_EXPANDED)) {
+      if (typeof parsed[key] === "boolean") next[key] = parsed[key];
+    }
+  } catch {
+    // localStorage 不可用或数据损坏时使用默认值
+  }
+  return next;
+}
+
+function savePanelState(panels) {
+  try {
+    localStorage.setItem(PANEL_STORAGE_KEY, JSON.stringify(panels));
+  } catch {
+    // localStorage 不可用时忽略
+  }
+}
+
+function applyPanelState(panels = loadPanelState()) {
+  document.querySelectorAll("[data-panel]").forEach((card) => {
+    const id = card.dataset.panel;
+    if (!id || !(id in DEFAULT_PANEL_EXPANDED)) return;
+    const expanded = panels[id] !== false;
+    card.classList.toggle("is-collapsed", !expanded);
+    const toggle = card.querySelector("[data-panel-toggle]");
+    if (toggle) {
+      toggle.setAttribute("aria-expanded", expanded ? "true" : "false");
+      toggle.setAttribute("aria-label", `${t(expanded ? "panel.collapse" : "panel.expand")} ${t(`${id}.title`)}`);
+    }
+  });
+}
+
+function setPanelExpanded(id, expanded) {
+  if (!(id in DEFAULT_PANEL_EXPANDED)) return;
+  const panels = loadPanelState();
+  panels[id] = Boolean(expanded);
+  savePanelState(panels);
+  applyPanelState(panels);
+}
+
+function togglePanel(id) {
+  const panels = loadPanelState();
+  setPanelExpanded(id, !panels[id]);
+}
+
 function getModeFromSelect(select) {
   const value = select?.value;
   return value === "plan" ? "plan" : "agent";
@@ -137,6 +199,202 @@ function getModeFromSelect(select) {
 function setModeSelect(select, mode) {
   if (!select) return;
   select.value = mode === "plan" ? "plan" : "agent";
+}
+
+function hasI18n(key) {
+  return t(key) !== key;
+}
+
+function paramLabel(paramId, displayName) {
+  const key = `model.param.${paramId}`;
+  if (hasI18n(key)) return t(key);
+  return displayName || paramId;
+}
+
+function paramValueLabel(paramId, value, displayName) {
+  const specific = `model.param.${paramId}.${value}`;
+  if (hasI18n(specific)) return t(specific);
+  const generic = `model.param.${value}`;
+  if (hasI18n(generic)) return t(generic);
+  return displayName || value;
+}
+
+function findCatalogModel(id) {
+  return state.models.find((item) => item.id === id || item.aliases?.includes(id));
+}
+
+function defaultParamsForModel(model) {
+  if (!model) return [];
+  const preset = model.variants?.find((item) => item.isDefault) ?? model.variants?.[0];
+  if (preset?.params?.length) return preset.params.map((item) => ({ id: item.id, value: item.value }));
+  return (model.parameters ?? [])
+    .map((parameter) => {
+      const value = parameter.values?.[0]?.value;
+      return value ? { id: parameter.id, value } : null;
+    })
+    .filter(Boolean);
+}
+
+function loadSavedModel() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(MODEL_STORAGE_KEY) || "null");
+    if (saved?.id) return { id: String(saved.id), params: Array.isArray(saved.params) ? saved.params : [] };
+  } catch {
+    // localStorage 不可用或数据损坏时忽略
+  }
+  return state.defaultModel || { id: "auto", params: [] };
+}
+
+function saveModelSelection(selection) {
+  try {
+    localStorage.setItem(MODEL_STORAGE_KEY, JSON.stringify(selection));
+  } catch {
+    // localStorage 不可用时忽略
+  }
+}
+
+function collectModelSelection(kind) {
+  const select = $(kind === "followUp" ? "#followUpModelSelect" : "#modelSelect");
+  const paramsRoot = $(kind === "followUp" ? "#followUpModelParams" : "#modelParams");
+  const id = select?.value || loadSavedModel().id;
+  const params = [...(paramsRoot?.querySelectorAll("[data-model-param]") || [])]
+    .map((element) => ({
+      id: element.dataset.modelParam,
+      value: element.value,
+    }))
+    .filter((item) => item.id && item.value);
+  return params.length ? { id, params } : { id };
+}
+
+function applyModelSelection(kind, selection) {
+  const select = $(kind === "followUp" ? "#followUpModelSelect" : "#modelSelect");
+  const paramsRoot = $(kind === "followUp" ? "#followUpModelParams" : "#modelParams");
+  if (!select || !paramsRoot) return;
+
+  const fallback = loadSavedModel();
+  const chosen = {
+    id: selection?.id && findCatalogModel(selection.id) ? selection.id : fallback.id,
+    params: Array.isArray(selection?.params) && selection.params.length ? selection.params : fallback.params,
+  };
+  if (![...select.options].some((option) => option.value === chosen.id) && state.models[0]) {
+    chosen.id = state.models[0].id;
+    chosen.params = defaultParamsForModel(state.models[0]);
+  }
+  select.value = chosen.id;
+  renderModelParams(kind, chosen);
+}
+
+function matchingVariantValue(model, params) {
+  if (!model?.variants?.length) return "";
+  const list = params || [];
+  const match = model.variants.find(
+    (variant) =>
+      variant.params.length === list.length &&
+      variant.params.every((item) => list.some((param) => param.id === item.id && param.value === item.value)),
+  );
+  return match ? JSON.stringify(match.params) : "";
+}
+
+function renderModelParams(kind, selection) {
+  const paramsRoot = $(kind === "followUp" ? "#followUpModelParams" : "#modelParams");
+  if (!paramsRoot) return;
+
+  const model = findCatalogModel(selection?.id);
+  const compact = kind === "followUp";
+  const params = selection?.params?.length ? selection.params : defaultParamsForModel(model);
+  const byId = new Map(params.map((item) => [item.id, item.value]));
+  const parts = [];
+
+  if (model?.variants?.length > 1) {
+    const current = matchingVariantValue(model, params);
+    parts.push(`
+      <label>
+        <span>${escapeHtml(t("submit.modelVariant"))}</span>
+        <select data-model-variant>
+          <option value="">${escapeHtml(t("submit.modelCustom"))}</option>
+          ${model.variants
+            .map((variant) => {
+              const value = JSON.stringify(variant.params);
+              const selected = value === current ? " selected" : "";
+              return `<option value="${escapeHtml(value)}"${selected}>${escapeHtml(variant.displayName || t("submit.modelCustom"))}</option>`;
+            })
+            .join("")}
+        </select>
+      </label>
+    `);
+  }
+
+  for (const parameter of model?.parameters || []) {
+    const current = byId.get(parameter.id) || parameter.values?.[0]?.value || "";
+    parts.push(`
+      <label>
+        <span>${escapeHtml(paramLabel(parameter.id, parameter.displayName))}</span>
+        <select data-model-param="${escapeHtml(parameter.id)}">
+          ${(parameter.values || [])
+            .map((item) => {
+              const selected = item.value === current ? " selected" : "";
+              return `<option value="${escapeHtml(item.value)}"${selected}>${escapeHtml(paramValueLabel(parameter.id, item.value, item.displayName))}</option>`;
+            })
+            .join("")}
+        </select>
+      </label>
+    `);
+  }
+
+  paramsRoot.classList.toggle("compact", compact);
+  paramsRoot.innerHTML = parts.join("");
+}
+
+function renderModelSettings(kind) {
+  const select = $(kind === "followUp" ? "#followUpModelSelect" : "#modelSelect");
+  if (!select) return;
+
+  const previous = collectModelSelection(kind);
+  select.innerHTML = state.models
+    .map((model) => `<option value="${escapeHtml(model.id)}">${escapeHtml(model.displayName || model.id)}</option>`)
+    .join("");
+  applyModelSelection(kind, previous.id ? previous : loadSavedModel());
+}
+
+function formatModelBadge(model) {
+  if (!model?.id) return "";
+  const catalog = findCatalogModel(model.id);
+  const name = catalog?.displayName || model.id;
+  const extras = (model.params || [])
+    .map((param) => {
+      const definition = catalog?.parameters?.find((item) => item.id === param.id);
+      const value = definition?.values?.find((item) => item.value === param.value);
+      if (param.value === "false") return "";
+      if (param.value === "true") return paramLabel(param.id, definition?.displayName);
+      return paramValueLabel(param.id, param.value, value?.displayName);
+    })
+    .filter(Boolean);
+  const label = extras.length ? `${name} · ${extras.join(" / ")}` : name;
+  return `<span class="mode-badge model-badge">${escapeHtml(label)}</span>`;
+}
+
+function bindModelSettings(kind) {
+  const select = $(kind === "followUp" ? "#followUpModelSelect" : "#modelSelect");
+  const paramsRoot = $(kind === "followUp" ? "#followUpModelParams" : "#modelParams");
+  select?.addEventListener("change", () => {
+    const model = findCatalogModel(select.value);
+    const next = { id: select.value, params: defaultParamsForModel(model) };
+    renderModelParams(kind, next);
+    saveModelSelection(collectModelSelection(kind));
+  });
+  paramsRoot?.addEventListener("change", (event) => {
+    const variant = event.target.closest("[data-model-variant]");
+    if (variant) {
+      let params = [];
+      try {
+        params = variant.value ? JSON.parse(variant.value) : [];
+      } catch {
+        params = [];
+      }
+      renderModelParams(kind, { id: select.value, params });
+    }
+    saveModelSelection(collectModelSelection(kind));
+  });
 }
 
 function modeText(mode) {
@@ -396,7 +654,6 @@ function renderJobs() {
   parentSelect.innerHTML =
     `<option value="">${escapeHtml(t("submit.newSession"))}</option>` +
     state.jobs
-      .filter((job) => job.agentId)
       .map((job) => `<option value="${job.id}">${escapeHtml(job.project.name)} - ${escapeHtml(job.promptSummary)}</option>`)
       .join("");
 
@@ -411,7 +668,7 @@ function renderJobs() {
       return `
         <article class="job-item${activeClass}" data-job-id="${job.id}">
           <div class="job-item-summary">
-            <strong>${escapeHtml(job.project.name)}<span class="status status-${job.status}">${statusText(job.status)}</span>${modeBadge(job.mode)}</strong>
+            <strong>${escapeHtml(job.project.name)}<span class="status status-${job.status}">${statusText(job.status)}</span>${modeBadge(job.mode)}${formatModelBadge(job.model)}</strong>
             <div>${escapeHtml(job.promptSummary)}</div>
             <div class="meta">${escapeHtml(formatDateTime(job.createdAt))} · ${job.id}</div>
           </div>
@@ -421,13 +678,37 @@ function renderJobs() {
     .join("");
 }
 
+function getJobTurns(job) {
+  if (!job) return [];
+  if (Array.isArray(job.turns) && job.turns.length > 0) return job.turns;
+  return [
+    {
+      id: job.activeTurnId || job.id,
+      prompt: job.prompt,
+      status: job.status,
+      createdAt: job.createdAt,
+      startedAt: job.startedAt,
+      finishedAt: job.finishedAt,
+      mode: job.mode,
+      result: job.result,
+      error: job.error,
+    },
+  ];
+}
+
+function conversationIsBusy(job) {
+  return getJobTurns(job).some((turn) => ["queued", "running"].includes(turn.status));
+}
+
 function canFollowUp(job) {
-  return Boolean(job?.agentId) && !["queued", "running"].includes(job.status);
+  return Boolean(job);
 }
 
 function canStopJob(job) {
-  return Boolean(job) && ["queued", "running"].includes(job.status);
+  return conversationIsBusy(job);
 }
+
+let followUpBoundJobId = "";
 
 function findJob(jobId) {
   if (!jobId) return null;
@@ -445,11 +726,16 @@ function updateFollowUpComposer(job) {
   if (!job) {
     form.classList.add("hidden");
     input.value = "";
+    followUpBoundJobId = "";
     return;
   }
 
   form.classList.remove("hidden");
-  setModeSelect(modeSelect, job.mode || loadSavedMode());
+  if (followUpBoundJobId !== job.id) {
+    followUpBoundJobId = job.id;
+    setModeSelect(modeSelect, job.mode || loadSavedMode());
+    applyModelSelection("followUp", job.model || loadSavedModel());
+  }
 
   const draft = state.followUpDrafts.get(job.id) || "";
   if (document.activeElement !== input) {
@@ -457,14 +743,7 @@ function updateFollowUpComposer(job) {
     autosizeTextarea(input);
   }
 
-  if (["queued", "running"].includes(job.status)) {
-    button.disabled = true;
-    input.disabled = true;
-    hint.textContent = t("session.followUpHintBusy");
-    return;
-  }
-
-  if (!job.agentId) {
+  if (!canFollowUp(job)) {
     button.disabled = true;
     input.disabled = true;
     hint.textContent = t("session.followUpHintNoAgent");
@@ -473,7 +752,7 @@ function updateFollowUpComposer(job) {
 
   button.disabled = false;
   input.disabled = false;
-  hint.textContent = t("session.followUpHintReady");
+  hint.textContent = conversationIsBusy(job) ? t("session.followUpHintBusy") : t("session.followUpHintReady");
 }
 
 function updateStopButton(job) {
@@ -485,56 +764,6 @@ function updateStopButton(job) {
   button.classList.toggle("hidden", !canStop);
   button.disabled = !canStop || isStopping;
   button.textContent = isStopping ? t("session.stopping") : t("session.stop");
-}
-
-function getConversationRootId(jobId) {
-  const seen = new Set();
-  let current = findJob(jobId);
-
-  while (current?.parentJobId && !seen.has(current.id)) {
-    seen.add(current.id);
-    const parent = findJob(current.parentJobId);
-    if (!parent) break;
-    current = parent;
-  }
-
-  return current?.id || jobId;
-}
-
-function getConversationChain(jobId) {
-  const rootId = getConversationRootId(jobId);
-  const related = [];
-  const byParent = new Map();
-
-  for (const job of state.jobs) {
-    if (job.parentJobId) {
-      const siblings = byParent.get(job.parentJobId) || [];
-      siblings.push(job);
-      byParent.set(job.parentJobId, siblings);
-    }
-  }
-
-  const queue = [];
-  const root = findJob(rootId);
-  if (root) queue.push(root);
-
-  const seen = new Set();
-  while (queue.length > 0) {
-    const job = queue.shift();
-    if (!job || seen.has(job.id)) continue;
-    seen.add(job.id);
-    related.push(job);
-    const children = (byParent.get(job.id) || []).sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-    queue.push(...children);
-  }
-
-  // 详情接口刚返回的当前任务可能比列表更新（尤其是 logs），用最新副本覆盖
-  if (state.currentJob && seen.has(state.currentJob.id)) {
-    const index = related.findIndex((job) => job.id === state.currentJob.id);
-    if (index >= 0) related[index] = state.currentJob;
-  }
-
-  return related.sort((a, b) => a.createdAt.localeCompare(b.createdAt));
 }
 
 function appendChatMessage(messages, role, text, time) {
@@ -555,19 +784,24 @@ function appendChatMessage(messages, role, text, time) {
   });
 }
 
-function buildChatMessages(jobs) {
+function buildChatMessages(job) {
   const messages = [];
+  const turns = getJobTurns(job);
+  const logs = job.logs || [];
 
-  for (const job of jobs) {
+  for (const turn of turns) {
     messages.push({
       role: "user",
-      time: job.createdAt,
-      text: job.prompt,
+      time: turn.createdAt,
+      text: turn.prompt,
     });
 
     let sawAssistant = false;
     let sawThinking = false;
-    for (const log of job.logs || []) {
+    for (const log of logs) {
+      if (log.turnId && log.turnId !== turn.id) continue;
+      if (!log.turnId && turn.id !== turns[0]?.id) continue;
+
       if (log.level === "thinking") {
         sawThinking = true;
         appendChatMessage(messages, "thinking", log.message, log.time);
@@ -588,19 +822,17 @@ function buildChatMessages(jobs) {
           text: log.message,
         });
       }
-      // info 日志（任务创建/启动等）不混入对话气泡
     }
 
-    // 兼容旧任务：流日志缺失时，用最终 result 兜底展示 AI 回复
-    if (!sawAssistant && typeof job.result === "string" && job.result.trim()) {
-      appendChatMessage(messages, "assistant", job.result, job.finishedAt || job.updatedAt);
+    if (!sawAssistant && typeof turn.result === "string" && turn.result.trim()) {
+      appendChatMessage(messages, "assistant", turn.result, turn.finishedAt || job.updatedAt);
     }
 
-    if (!sawAssistant && !sawThinking && !job.result && ["queued", "running"].includes(job.status)) {
+    if (!sawAssistant && !sawThinking && !turn.result && ["queued", "running"].includes(turn.status)) {
       messages.push({
         role: "system",
         level: "info",
-        time: job.updatedAt || job.startedAt || job.createdAt,
+        time: turn.startedAt || turn.createdAt,
         text: t("session.aiTyping"),
       });
     }
@@ -616,7 +848,7 @@ function renderChatMessages(job) {
     return;
   }
 
-  const messages = buildChatMessages(getConversationChain(job.id));
+  const messages = buildChatMessages(job);
   if (messages.length === 0) {
     output.innerHTML = `<p class="empty">${escapeHtml(t("session.noChat"))}</p>`;
     return;
@@ -687,6 +919,7 @@ function renderCurrentJob(job) {
     <strong>${escapeHtml(job.project.name)}</strong>
     <span class="status status-${job.status}">${statusText(job.status)}</span>
     ${modeBadge(job.mode)}
+    ${formatModelBadge(job.model)}
     <p class="meta">${escapeHtml(job.promptSummary)}</p>
   `;
   renderChatMessages(job);
@@ -703,8 +936,8 @@ function startPollingCurrentJob() {
   }, 2000);
 }
 
-async function submitFollowUp(prompt, parentJobId) {
-  const job = findJob(parentJobId);
+async function submitFollowUp(prompt, jobId) {
+  const job = findJob(jobId);
   if (!job) {
     showToast(t("toast.selectJob"));
     return;
@@ -715,31 +948,43 @@ async function submitFollowUp(prompt, parentJobId) {
   }
 
   const mode = getModeFromSelect($("#followUpModeSelect"));
+  const model = collectModelSelection("followUp");
   saveMode(mode);
+  saveModelSelection(model);
 
-  const { job: created } = await api("/api/jobs", {
+  const { job: updated } = await api(`/api/jobs/${job.id}/messages`, {
     method: "POST",
-    body: JSON.stringify({
-      projectId: job.project.id,
-      prompt,
-      parentJobId: job.id,
-      mode,
-    }),
+    body: JSON.stringify({ prompt, mode, model }),
   });
 
   state.followUpDrafts.delete(job.id);
-  state.currentJobId = created.id;
-  const chatOutput = $("#chatOutput");
-  if (chatOutput) delete chatOutput.dataset.ready;
-  renderCurrentJob(created);
+  state.currentJobId = updated.id;
+  renderCurrentJob(updated);
   $("#followUpInput").value = "";
   await refreshData();
   startPollingCurrentJob();
 }
 
 async function refreshData() {
-  const [projectsData, jobsData] = await Promise.all([api("/api/projects"), api("/api/jobs")]);
+  const [projectsData, jobsData, modelsData] = await Promise.all([
+    api("/api/projects"),
+    api("/api/jobs"),
+    api("/api/models").catch(() => null),
+  ]);
   state.projects = projectsData.projects;
+  const nextModels = modelsData?.models || [];
+  const nextIds = nextModels.map((item) => item.id).join("|");
+  const prevIds = state.models.map((item) => item.id).join("|");
+  if (nextModels.length) {
+    state.models = nextModels;
+    state.defaultModel = modelsData.defaultModel || { id: "auto" };
+    if (nextIds !== prevIds) {
+      renderModelSettings("submit");
+      renderModelSettings("followUp");
+    }
+  } else if (!state.models.length) {
+    showToast(t("toast.modelsFailed"));
+  }
   state.jobs = jobsData.jobs;
   renderProjects();
   renderJobs();
@@ -751,10 +996,15 @@ async function refreshData() {
 
 async function refreshCurrentJob() {
   if (!state.currentJobId) return;
-  const { job } = await api(`/api/jobs/${state.currentJobId}`);
+  const jobsData = await api("/api/jobs");
+  state.jobs = jobsData.jobs;
+  renderJobs();
+
+  const job = findJob(state.currentJobId);
+  if (!job) return;
   renderCurrentJob(job);
 
-  if (!["queued", "running"].includes(job.status) && state.pollingTimer) {
+  if (!conversationIsBusy(job) && state.pollingTimer) {
     window.clearInterval(state.pollingTimer);
     state.pollingTimer = null;
     await refreshData();
@@ -775,6 +1025,7 @@ async function stopCurrentJob() {
       method: "POST",
       body: "{}",
     });
+    state.currentJobId = updatedJob.id;
     state.currentJob = updatedJob;
     renderCurrentJob(updatedJob);
     await refreshData();
@@ -925,13 +1176,17 @@ on("#submitJobButton", "click", async () => {
   $("#submitJobButton").disabled = true;
   try {
     const mode = getModeFromSelect($("#modeSelect"));
+    const model = collectModelSelection("submit");
     saveMode(mode);
+    saveModelSelection(model);
 
     const { job } = await api("/api/jobs", {
       method: "POST",
-      body: JSON.stringify({ projectId, prompt, parentJobId, mode }),
+      body: JSON.stringify({ projectId, prompt, parentJobId, mode, model }),
     });
     state.currentJobId = job.id;
+    setPanelExpanded("submit", false);
+    setPanelExpanded("session", true);
     renderCurrentJob(job);
     $("#promptInput").value = "";
     await refreshData();
@@ -980,6 +1235,13 @@ on("#followUpInput", "input", (event) => {
   }
 });
 
+on("#appView", "click", (event) => {
+  const toggle = event.target.closest("[data-panel-toggle]");
+  if (!toggle || !event.currentTarget.contains(toggle)) return;
+  event.preventDefault();
+  togglePanel(toggle.dataset.panelToggle);
+});
+
 on("#modeSelect", "change", (event) => {
   saveMode(getModeFromSelect(event.currentTarget));
 });
@@ -993,9 +1255,8 @@ on("#jobList", "click", async (event) => {
   if (!item) return;
 
   const clickedId = item.dataset.jobId;
-  const chain = getConversationChain(clickedId);
-  const tip = chain.at(-1);
-  state.currentJobId = tip?.id || clickedId;
+  state.currentJobId = clickedId;
+  setPanelExpanded("session", true);
 
   const chatOutput = $("#chatOutput");
   if (chatOutput) delete chatOutput.dataset.ready;
@@ -1111,8 +1372,11 @@ $("#langSwitch")?.addEventListener("click", (event) => {
 stripCredentialsFromUrl();
 applyDomI18n();
 updateLangSwitch();
+applyPanelState();
 updateInstallButtonVisibility();
 setModeSelect($("#modeSelect"), loadSavedMode());
+bindModelSettings("submit");
+bindModelSettings("followUp");
 ensureMarkdownLibs().catch((error) => {
   console.warn("Markdown 组件加载失败", error);
 });

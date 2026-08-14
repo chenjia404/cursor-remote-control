@@ -16,7 +16,7 @@
 - 默认监听端口 `20267`。
 - 支持在 `PROJECT_ROOTS` 范围内按目录浏览并确认项目；下拉列表只显示已确认过的项目。
 - 通过 Cursor SDK 的本地模式在项目目录中执行 Agent 任务。
-- 保存任务历史、运行状态、Agent ID、Run ID 和日志。
+- 保存任务历史、运行状态、Agent ID、Run ID 和日志。一个任务即一轮会话，可在同一任务内追加多轮指令。
 - 支持 PWA，可在手机浏览器中安装到主屏幕。
 - 界面支持中文 / English 切换。
 - 不提供任意 Shell 输入框，网页不能直接执行系统命令。
@@ -96,6 +96,8 @@ pwsh -File scripts/install-autostart.ps1 -DelaySeconds 120
 pnpm autostart:start
 pnpm autostart:uninstall
 ```
+
+`autostart:install` 注册的是守护进程：每约 15 秒检查 20267，服务挂了才拉起，**不会结束已经在跑的进程**。日志在 `data/watchdog.log`。当前服务还活着时，可在另一个 PowerShell 窗口执行 `pnpm autostart:watch` 先挂上守护；`pnpm autostart:watch:stop` 只停守护、不停 Node。
 
 访问：
 

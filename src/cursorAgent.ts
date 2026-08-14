@@ -8,7 +8,19 @@ import {
   type SendOptions,
 } from "@cursor/sdk";
 import { config } from "./config.js";
-import { appendJobLog, getJob, updateJob, type JobRecord } from "./jobs.js";
+import {
+  appendJobLog,
+  cancelQueuedTurns,
+  getJob,
+  getTurn,
+  listQueuedJobIds,
+  nextQueuedTurn,
+  updateJob,
+  updateTurn,
+  type JobRecord,
+  type JobTurn,
+} from "./jobs.js";
+import { formatModelSelection, resolveModelSelection, toSdkModel } from "./models.js";
 
 type DisposableAgent = {
   agentId?: string;
@@ -18,15 +30,11 @@ type DisposableAgent = {
 };
 
 const activeRuns = new Map<string, Run>();
+const conversationPumps = new Map<string, Promise<void>>();
 
 function requireCursorApiKey(): string {
   if (!config.cursorApiKey) throw new Error("CURSOR_API_KEY 未配置");
   return config.cursorApiKey;
-}
-
-function resolveModelSelection(agent?: DisposableAgent): ModelSelection {
-  if (agent?.model?.id) return agent.model;
-  return { id: config.cursorModel };
 }
 
 function unwrapSdkMessage(event: unknown): unknown {
@@ -65,29 +73,29 @@ function extractStreamText(
   return null;
 }
 
-function hasAssistantLogs(job: JobRecord): boolean {
-  return job.logs.some((log) => log.level === "assistant");
+function hasAssistantLogs(job: JobRecord, turnId: string): boolean {
+  return job.logs.some((log) => log.level === "assistant" && log.turnId === turnId);
 }
 
-function resolveJobMode(job: JobRecord): AgentModeOption {
-  return job.mode ?? config.cursorDefaultMode;
+function resolveTurnMode(job: JobRecord, turn: JobTurn): AgentModeOption {
+  return turn.mode ?? job.mode ?? config.cursorDefaultMode;
 }
 
-function modeLabel(mode: AgentModeOption): string {
-  return mode === "plan" ? "Plan" : "Agent";
+function runSettingsLabel(mode: AgentModeOption, modelLabel: string): string {
+  const modeText = mode === "plan" ? "Plan" : "Agent";
+  return modelLabel ? `${modeText} 模式，${modelLabel}` : `${modeText} 模式`;
 }
 
-async function createAgentForJob(job: JobRecord): Promise<DisposableAgent> {
+async function createAgentForJob(job: JobRecord, turn: JobTurn): Promise<DisposableAgent> {
   const apiKey = requireCursorApiKey();
-  const parentJob = job.parentJobId ? getJob(job.parentJobId) : undefined;
-  const model = { id: config.cursorModel };
+  const selection = await resolveModelSelection(turn.model ?? job.model);
+  const model = toSdkModel(selection);
+  const mode = resolveTurnMode(job, turn);
+  const modelLabel = formatModelSelection(selection);
 
-  const mode = resolveJobMode(job);
-
-  if (parentJob?.agentId) {
-    appendJobLog(job.id, "info", `继续已有 Agent：${parentJob.agentId}（${modeLabel(mode)} 模式）`);
-    // Local SDK resume 同样需要显式 model，否则会直接失败
-    return (await Agent.resume(parentJob.agentId, {
+  if (job.agentId) {
+    appendJobLog(job.id, "info", `继续已有 Agent：${job.agentId}（${runSettingsLabel(mode, modelLabel)}）`, turn.id);
+    return (await Agent.resume(job.agentId, {
       apiKey,
       model,
       local: { cwd: job.project.path },
@@ -109,17 +117,22 @@ async function disposeAgent(agent: DisposableAgent): Promise<void> {
   }
 }
 
-function isJobCancelled(jobId: string): boolean {
-  return getJob(jobId)?.status === "cancelled";
+function isTurnCancelled(jobId: string, turnId: string): boolean {
+  const job = getJob(jobId);
+  if (!job) return true;
+  const turn = getTurn(job, turnId);
+  return !turn || turn.status === "cancelled";
 }
 
-function markJobCancelled(jobId: string, message: string): JobRecord {
-  const job = updateJob(jobId, {
+function markTurnCancelled(jobId: string, turnId: string, message: string): JobRecord {
+  updateTurn(jobId, turnId, {
     status: "cancelled",
     finishedAt: new Date().toISOString(),
     error: undefined,
   });
-  appendJobLog(jobId, "info", message);
+  appendJobLog(jobId, "info", message, turnId);
+  const job = getJob(jobId);
+  if (!job) throw new Error("任务不存在");
   return job;
 }
 
@@ -127,95 +140,146 @@ export async function cancelCursorJob(jobId: string): Promise<JobRecord> {
   const job = getJob(jobId);
   if (!job) throw new Error("任务不存在");
 
-  if (!["queued", "running"].includes(job.status)) {
+  const runningTurn = job.turns.find((turn) => turn.status === "running");
+  const queuedTurns = job.turns.filter((turn) => turn.status === "queued");
+
+  if (!runningTurn && queuedTurns.length === 0) {
     return job;
   }
 
-  const run = activeRuns.get(jobId);
+  if (!runningTurn) {
+    cancelQueuedTurns(job.id);
+    appendJobLog(job.id, "info", "排队中的指令已取消。");
+    return getJob(job.id) ?? job;
+  }
+
+  const run = activeRuns.get(job.id);
   if (!run) {
-    return markJobCancelled(jobId, "任务已标记为停止。");
+    const cancelled = markTurnCancelled(job.id, runningTurn.id, "任务已标记为停止。");
+    cancelQueuedTurns(job.id);
+    return getJob(cancelled.id) ?? cancelled;
   }
 
   if (!run.supports("cancel")) {
     const reason = run.unsupportedReason("cancel") || "当前 Cursor SDK 运行不支持取消。";
-    appendJobLog(jobId, "error", `停止任务失败：${reason}`);
+    appendJobLog(jobId, "error", `停止任务失败：${reason}`, runningTurn.id);
     throw new UnsupportedRunOperationError("cancel", reason);
   }
 
-  appendJobLog(jobId, "info", "正在停止任务。");
+  appendJobLog(jobId, "info", "正在停止任务。", runningTurn.id);
   await run.cancel();
-  return markJobCancelled(jobId, "任务已停止。");
+  const cancelled = markTurnCancelled(job.id, runningTurn.id, "当前轮次已停止。");
+  cancelQueuedTurns(job.id);
+  return getJob(cancelled.id) ?? cancelled;
 }
 
-export async function runCursorJob(jobId: string): Promise<void> {
+async function pumpConversation(jobId: string): Promise<void> {
+  while (true) {
+    const next = nextQueuedTurn(jobId);
+    if (!next) return;
+    await runJobTurn(jobId, next.id);
+  }
+}
+
+/** 同一任务内串行执行：进行中时后来的指令只入队，结束后自动跑下一轮。 */
+export function scheduleConversation(jobId: string): void {
+  const job = getJob(jobId);
+  if (!job) return;
+
+  const previous = conversationPumps.get(job.id) ?? Promise.resolve();
+  const next = previous
+    .then(() => pumpConversation(job.id))
+    .catch((error) => {
+      console.error("会话任务调度失败", error);
+    });
+  conversationPumps.set(job.id, next);
+}
+
+export function resumeQueuedConversations(): number {
+  const started = new Set<string>();
+
+  for (const jobId of listQueuedJobIds()) {
+    if (started.has(jobId)) continue;
+    started.add(jobId);
+    scheduleConversation(jobId);
+  }
+
+  return started.size;
+}
+
+export async function runJobTurn(jobId: string, turnId: string): Promise<void> {
   const job = getJob(jobId);
   if (!job) throw new Error("任务不存在");
+
+  const turn = getTurn(job, turnId);
+  if (!turn || turn.status !== "queued") return;
 
   let agent: DisposableAgent | undefined;
 
   try {
-    if (isJobCancelled(job.id)) return;
+    if (isTurnCancelled(job.id, turn.id)) return;
 
-    updateJob(job.id, {
+    updateTurn(job.id, turn.id, {
       status: "running",
       startedAt: new Date().toISOString(),
     });
-    const mode = resolveJobMode(job);
-    appendJobLog(job.id, "info", `开始在项目 ${job.project.name} 中执行（${modeLabel(mode)} 模式）。`);
+    updateJob(job.id, { activeTurnId: turn.id });
+    const mode = resolveTurnMode(job, turn);
+    const selection = await resolveModelSelection(turn.model ?? job.model);
+    const modelLabel = formatModelSelection(selection);
+    appendJobLog(job.id, "info", `开始在项目 ${job.project.name} 中执行（${runSettingsLabel(mode, modelLabel)}）。`, turn.id);
 
-    agent = await createAgentForJob(job);
-    updateJob(job.id, { agentId: agent.agentId });
-    if (isJobCancelled(job.id)) return;
+    agent = await createAgentForJob(job, turn);
+    updateJob(job.id, { agentId: agent.agentId, activeTurnId: turn.id, model: selection });
+    if (isTurnCancelled(job.id, turn.id)) return;
 
-    const run = await agent.send(job.prompt, { mode });
+    const run = await agent.send(turn.prompt, { mode, model: toSdkModel(selection) });
     activeRuns.set(job.id, run);
     updateJob(job.id, { runId: run.id });
-    appendJobLog(job.id, "info", `Run 已启动：${run.id ?? "unknown"}`);
+    appendJobLog(job.id, "info", `Run 已启动：${run.id ?? "unknown"}`, turn.id);
 
     if (run.stream) {
-      // assistant / thinking 分开落库：前端可分别展示思考过程与正式回复
       for await (const event of run.stream()) {
-        if (isJobCancelled(job.id)) break;
+        if (isTurnCancelled(job.id, turn.id)) break;
 
         const chunk = extractStreamText(event);
         if (!chunk) continue;
-        appendJobLog(job.id, chunk.level, chunk.text);
+        appendJobLog(job.id, chunk.level, chunk.text, turn.id);
       }
     }
 
     const result = await run.wait();
-    if (result.status === "cancelled" || isJobCancelled(job.id)) {
-      markJobCancelled(job.id, "任务已停止。");
+    if (result.status === "cancelled" || isTurnCancelled(job.id, turn.id)) {
+      markTurnCancelled(job.id, turn.id, "当前轮次已停止。");
       return;
     }
 
     if (result.status && result.status !== "finished") {
-      updateJob(job.id, {
+      updateTurn(job.id, turn.id, {
         status: "error",
         finishedAt: new Date().toISOString(),
         error: `Cursor Agent 返回状态：${result.status}`,
       });
-      appendJobLog(job.id, "error", `任务失败：${result.status}`);
+      appendJobLog(job.id, "error", `任务失败：${result.status}`, turn.id);
       return;
     }
 
-    // stream 未产出文本时，用 wait() 的最终 result 兜底写入对话
     if (typeof result.result === "string" && result.result.trim()) {
       const latest = getJob(job.id);
-      if (latest && !hasAssistantLogs(latest)) {
-        appendJobLog(job.id, "assistant", result.result);
+      if (latest && !hasAssistantLogs(latest, turn.id)) {
+        appendJobLog(job.id, "assistant", result.result, turn.id);
       }
     }
 
-    updateJob(job.id, {
+    updateTurn(job.id, turn.id, {
       status: "finished",
       finishedAt: new Date().toISOString(),
-      result: result.result,
+      result: typeof result.result === "string" ? result.result : undefined,
     });
-    appendJobLog(job.id, "info", "任务已完成。");
+    appendJobLog(job.id, "info", "本轮指令已完成。", turn.id);
   } catch (error) {
-    if (isJobCancelled(job.id)) {
-      appendJobLog(job.id, "info", "任务已停止。");
+    if (isTurnCancelled(job.id, turn.id)) {
+      appendJobLog(job.id, "info", "当前轮次已停止。", turn.id);
       return;
     }
 
@@ -226,17 +290,22 @@ export async function runCursorJob(jobId: string): Promise<void> {
           ? error.message
           : String(error);
 
-    updateJob(job.id, {
+    updateTurn(job.id, turn.id, {
       status: "error",
       finishedAt: new Date().toISOString(),
       error: message,
     });
-    appendJobLog(job.id, "error", message);
+    appendJobLog(job.id, "error", message, turn.id);
   } finally {
     activeRuns.delete(job.id);
     if (agent) {
       await disposeAgent(agent).catch((error) => {
-        appendJobLog(job.id, "error", `释放 Agent 资源失败：${error instanceof Error ? error.message : String(error)}`);
+        appendJobLog(
+          job.id,
+          "error",
+          `释放 Agent 资源失败：${error instanceof Error ? error.message : String(error)}`,
+          turn.id,
+        );
       });
     }
   }

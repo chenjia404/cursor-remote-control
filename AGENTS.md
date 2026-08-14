@@ -50,7 +50,7 @@ pnpm generate-icons
 - `src/auth.ts`：管理员登录、密码哈希、Session Cookie、CSRF 校验。
 - `src/config.ts`：环境变量读取和配置校验。
 - `src/projects.ts`：已选项目持久化、目录浏览、路径安全校验与项目标记检测。
-- `src/jobs.ts`：任务历史、任务状态、日志持久化。
+- `src/jobs.ts`：任务历史、多轮对话、任务状态、日志持久化。
 - `src/cursorAgent.ts`：Cursor SDK 本地 Agent 执行封装。
 - `src/public/`：移动端 Web 页面和 PWA 静态资源。
 - `src/public/i18n.js`：前端中英文文案与语言切换（偏好保存在 localStorage）。
@@ -125,7 +125,9 @@ pnpm autostart:start
 pnpm autostart:uninstall
 ```
 
-计划任务名：`CursorRemoteControl`。日志仍写入 `data/server.log`。
+计划任务名：`CursorRemoteControl`。登录后跑的是 `scripts/watchdog.ps1`：发现 20267 没人听才调用 `start-server.ps1`，不会杀掉已在运行的服务。日志：`data/watchdog.log`、`data/server.log`。
+
+立即挂上守护（前台循环，适合用新窗口）：`pnpm autostart:watch`。停止守护不停 Node：`pnpm autostart:watch:stop`。重新注册任务：`pnpm autostart:install`。
 
 ## Cursor SDK 注意事项
 
@@ -135,6 +137,7 @@ pnpm autostart:uninstall
 - `CURSOR_DEFAULT_MODE` 可选 `agent` 或 `plan`，作为未指定模式时的默认值。
 - Cursor SDK 当前仅支持 `agent` 与 `plan` 两种对话模式；可通过 `Agent.create({ mode })` 与 `agent.send(prompt, { mode })` 切换。
 - Agent 输出是流式分片，写日志时需要合并连续 assistant 内容，避免界面出现一行一个词。
+- 追加指令写入同一任务的 `turns`，通过 `Agent.resume` 继续同一会话，不要再拆成新的子任务。
 
 ## Docker 注意事项
 
