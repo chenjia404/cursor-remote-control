@@ -83,8 +83,12 @@ if ($DelaySeconds -gt 0) {
 }
 Write-WatchdogLog "守护已启动 PID=$PID interval=${IntervalSeconds}s port=$Port"
 
-$pwsh = (Get-Command pwsh).Source
+$pwsh = Join-Path $PSHOME "pwsh.exe"
+if (-not (Test-Path -LiteralPath $pwsh)) {
+  $pwsh = (Get-Command pwsh).Source
+}
 $failCount = 0
+$lastHeartbeat = Get-Date
 try {
   while ($true) {
     if (Test-Path -LiteralPath $StopFile) {
@@ -96,6 +100,10 @@ try {
 
     if (Test-PortListening -LocalPort $Port) {
       $failCount = 0
+      if (((Get-Date) - $lastHeartbeat).TotalMinutes -ge 10) {
+        Write-WatchdogLog "监护中 PID=$PID port=$Port 正常"
+        $lastHeartbeat = Get-Date
+      }
       Start-Sleep -Seconds $IntervalSeconds
       continue
     }

@@ -97,7 +97,7 @@ pnpm autostart:start
 pnpm autostart:uninstall
 ```
 
-`autostart:install` 注册的是守护进程：每约 15 秒检查 20267，服务挂了才拉起，**不会结束已经在跑的进程**。日志在 `data/watchdog.log`。当前服务还活着时，可在另一个 PowerShell 窗口执行 `pnpm autostart:watch` 先挂上守护；`pnpm autostart:watch:stop` 只停守护、不停 Node。
+`autostart:install` 注册计划任务 `CursorRemoteControl`：登录后启动守护进程，安装后也会立即启动（不必等下次登录）。守护约每 15 秒检查 20267，服务挂了才拉起，**不会结束已经在跑的进程**。若守护进程自己退出，计划任务每 1 分钟补拉一次。日志在 `data/watchdog.log`。当前服务还活着时，可在另一个 PowerShell 窗口执行 `pnpm autostart:watch` 先挂上守护；`pnpm autostart:watch:stop` 只停守护、不停 Node。
 
 访问：
 

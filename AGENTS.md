@@ -125,7 +125,7 @@ pnpm autostart:start
 pnpm autostart:uninstall
 ```
 
-计划任务名：`CursorRemoteControl`。登录后跑的是 `scripts/watchdog.ps1`：发现 20267 没人听才调用 `start-server.ps1`，不会杀掉已在运行的服务。日志：`data/watchdog.log`、`data/server.log`。
+计划任务名：`CursorRemoteControl`。登录后跑的是 `scripts/watchdog.ps1`：发现 20267 没人听才调用 `start-server.ps1`，不会杀掉已在运行的服务。守护进程退出后，计划任务每 1 分钟补拉一次。日志：`data/watchdog.log`、`data/server.log`。
 
 立即挂上守护（前台循环，适合用新窗口）：`pnpm autostart:watch`。停止守护不停 Node：`pnpm autostart:watch:stop`。重新注册任务：`pnpm autostart:install`。
 

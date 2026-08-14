@@ -29,23 +29,45 @@ function Test-PortListening {
   return [bool](Get-NetTCPConnection -LocalPort $LocalPort -State Listen -ErrorAction SilentlyContinue)
 }
 
+function Resolve-RealNodeExe {
+  param([string]$Candidate)
+  if (-not $Candidate -or -not (Test-Path -LiteralPath $Candidate)) {
+    return $null
+  }
+  $resolved = (Resolve-Path -LiteralPath $Candidate).Path
+  if ($resolved -match '[\\/]shims[\\/]node\.exe$') {
+    try {
+      $real = & $resolved -p "process.execPath" 2>$null | Select-Object -First 1
+      if ($real -and (Test-Path -LiteralPath $real)) {
+        return (Resolve-Path -LiteralPath $real).Path
+      }
+    } catch {
+      # 继续使用 shim
+    }
+  }
+  return $resolved
+}
+
 function Resolve-NodeExe {
   param([string]$Preferred)
 
-  if ($Preferred -and (Test-Path -LiteralPath $Preferred)) {
-    return (Resolve-Path -LiteralPath $Preferred).Path
+  $found = Resolve-RealNodeExe -Candidate $Preferred
+  if ($found) {
+    return $found
   }
 
   if (Test-Path -LiteralPath $NodePathFile) {
     $saved = (Get-Content -LiteralPath $NodePathFile -Encoding UTF8 -ErrorAction SilentlyContinue | Select-Object -First 1)
-    if ($saved -and (Test-Path -LiteralPath $saved)) {
-      return (Resolve-Path -LiteralPath $saved).Path
+    $found = Resolve-RealNodeExe -Candidate $saved
+    if ($found) {
+      return $found
     }
   }
 
   $fromPath = Get-Command node -ErrorAction SilentlyContinue
-  if ($fromPath -and $fromPath.Source) {
-    return $fromPath.Source
+  $found = Resolve-RealNodeExe -Candidate ($fromPath?.Source)
+  if ($found) {
+    return $found
   }
 
   $candidates = @(
@@ -54,8 +76,9 @@ function Resolve-NodeExe {
     (Join-Path $env:LOCALAPPDATA "mise\shims\node.exe")
   )
   foreach ($candidate in $candidates) {
-    if ($candidate -and (Test-Path -LiteralPath $candidate)) {
-      return (Resolve-Path -LiteralPath $candidate).Path
+    $found = Resolve-RealNodeExe -Candidate $candidate
+    if ($found) {
+      return $found
     }
   }
 
