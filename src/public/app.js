@@ -7,7 +7,7 @@ import {
   setLocale,
   t,
   translateApiError,
-} from "./i18n.js?v=0.2.19";
+} from "./i18n.js?v=0.2.20";
 
 let markedRef = null;
 let purifyRef = null;
@@ -496,6 +496,7 @@ async function api(path, options = {}) {
   const sessionToken = getSessionToken();
   const response = await fetch(path, {
     credentials: "same-origin",
+    cache: "no-store",
     ...rest,
     headers: {
       "Content-Type": "application/json",
@@ -781,8 +782,17 @@ let followUpBoundJobId = "";
 
 function findJob(jobId) {
   if (!jobId) return null;
-  if (state.currentJob?.id === jobId) return state.currentJob;
-  return state.jobs.find((job) => job.id === jobId) || null;
+  return state.jobs.find((job) => job.id === jobId) || (state.currentJob?.id === jobId ? state.currentJob : null);
+}
+
+function upsertJob(job) {
+  if (!job) return;
+  const index = state.jobs.findIndex((item) => item.id === job.id);
+  if (index >= 0) {
+    state.jobs[index] = job;
+  } else {
+    state.jobs.unshift(job);
+  }
 }
 
 function updateFollowUpComposer(job) {
@@ -1008,13 +1018,25 @@ function renderCurrentJob(job) {
   updateStopButton(job);
 }
 
+let currentJobPollInFlight = false;
+
+function stopPollingCurrentJob() {
+  if (!state.pollingTimer) return;
+  window.clearInterval(state.pollingTimer);
+  state.pollingTimer = null;
+}
+
 function startPollingCurrentJob() {
-  if (state.pollingTimer) {
-    window.clearInterval(state.pollingTimer);
-  }
+  if (state.pollingTimer) return;
   state.pollingTimer = window.setInterval(() => {
-    refreshCurrentJob().catch((error) => showToast(error.message));
-  }, 2000);
+    if (currentJobPollInFlight) return;
+    currentJobPollInFlight = true;
+    refreshCurrentJob()
+      .catch((error) => showToast(error.message))
+      .finally(() => {
+        currentJobPollInFlight = false;
+      });
+  }, 1000);
 }
 
 async function submitFollowUp(prompt, jobId, delivery = "queue") {
@@ -1061,19 +1083,18 @@ async function refreshData() {
 
 async function refreshCurrentJob() {
   if (!state.currentJobId) return;
-  const jobsData = await api("/api/jobs");
-  state.jobs = jobsData.jobs;
-  renderJobs();
 
-  const job = findJob(state.currentJobId);
-  if (!job) return;
+  const { job } = await api(`/api/jobs/${state.currentJobId}`);
+  upsertJob(job);
+  renderJobs();
   renderCurrentJob(job);
 
-  if (!conversationIsBusy(job) && state.pollingTimer) {
-    window.clearInterval(state.pollingTimer);
-    state.pollingTimer = null;
-    await refreshData();
+  if (conversationIsBusy(job)) {
+    startPollingCurrentJob();
+    return;
   }
+
+  stopPollingCurrentJob();
 }
 
 async function stopCurrentJob() {
