@@ -26,7 +26,7 @@ import {
   resumeQueuedConversations,
   scheduleConversation,
 } from "./cursorAgent.js";
-import { createJob, enqueueJobTurn, getJob, listJobs, loadJobs, recoverInterruptedJobs, updateTurn } from "./jobs.js";
+import { createJob, enqueueJobTurn, flushJobs, getJob, listJobs, loadJobs, recoverInterruptedJobs, updateTurn } from "./jobs.js";
 import { readJobImage, saveJobImages } from "./jobImages.js";
 import { defaultModelSelection, listCursorModels, normalizeModelSelection, warmupModelCatalog } from "./models.js";
 import {
@@ -502,6 +502,10 @@ async function start(): Promise<void> {
 
     app.log.error(error);
     reply.code(500).send({ error: "服务器内部错误" });
+  });
+
+  app.addHook("onClose", async () => {
+    await flushJobs();
   });
 
   await app.listen({ host: config.host, port: config.port });

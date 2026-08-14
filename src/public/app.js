@@ -7,7 +7,7 @@ import {
   setLocale,
   t,
   translateApiError,
-} from "./i18n.js?v=0.2.29";
+} from "./i18n.js?v=0.2.30";
 
 let markedRef = null;
 let purifyRef = null;
@@ -1575,11 +1575,27 @@ function findJob(jobId) {
   return state.jobs.find((job) => job.id === jobId) || (state.currentJob?.id === jobId ? state.currentJob : null);
 }
 
+function mergeListedJob(listed, previous) {
+  if (!previous) return listed;
+  if (Array.isArray(listed.logs) && listed.logs.length > 0) return listed;
+  return {
+    ...listed,
+    logs: previous.logs,
+    prompt: listed.prompt || previous.prompt,
+    turns: listed.turns?.some((turn) => turn.prompt) ? listed.turns : previous.turns || listed.turns,
+  };
+}
+
+function replaceJobList(list) {
+  const previous = new Map(state.jobs.map((job) => [job.id, job]));
+  state.jobs = (list || []).map((job) => mergeListedJob(job, previous.get(job.id)));
+}
+
 function upsertJob(job) {
   if (!job) return;
   const index = state.jobs.findIndex((item) => item.id === job.id);
   if (index >= 0) {
-    state.jobs[index] = job;
+    state.jobs[index] = mergeListedJob(job, state.jobs[index]);
   } else {
     state.jobs.unshift(job);
   }
@@ -1914,7 +1930,7 @@ function shouldKeepPolling() {
 
 async function refreshJobList() {
   const jobsData = await api("/api/jobs");
-  state.jobs = jobsData.jobs;
+  replaceJobList(jobsData.jobs);
   if (state.currentJob && state.currentJobId) {
     upsertJob(state.currentJob);
   }
@@ -2005,7 +2021,7 @@ async function submitFollowUp(prompt, jobId, delivery = "queue") {
 async function refreshData() {
   const [projectsData, jobsData] = await Promise.all([api("/api/projects"), api("/api/jobs")]);
   state.projects = projectsData.projects;
-  state.jobs = jobsData.jobs;
+  replaceJobList(jobsData.jobs);
   renderProjectList();
   renderJobs();
   void loadModels();

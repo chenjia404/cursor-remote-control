@@ -88,11 +88,37 @@ export type JobRecord = {
   logs: JobLog[];
 };
 
+export type JobTurnSummary = Pick<JobTurn, "id" | "status" | "createdAt" | "startedAt" | "finishedAt" | "mode">;
+
+/** 历史列表用的瘦身结构，不含日志和完整指令正文 */
+export type JobSummary = {
+  id: string;
+  project: JobRecord["project"];
+  promptSummary: string;
+  status: JobStatus;
+  createdAt: string;
+  updatedAt: string;
+  startedAt?: string;
+  finishedAt?: string;
+  mode?: AgentMode;
+  model?: AgentModelSelection;
+  extraProjects?: ExtraProjectRef[];
+  sandbox?: boolean;
+  autoReview?: boolean;
+  usage?: JobTokenUsage;
+  activeTurnId?: string;
+  turns: JobTurnSummary[];
+};
+
 const jobs = new Map<string, JobRecord>();
 let loaded = false;
 let writeChain = Promise.resolve();
+let persistTimer: ReturnType<typeof setTimeout> | null = null;
+let persistDirtySince = 0;
 const MAX_LOG_ENTRIES = 2000;
 const MAX_LOG_MESSAGE_LENGTH = 20000;
+const PERSIST_DEBOUNCE_MS = 400;
+const PERSIST_MAX_DELAY_MS = 1500;
 
 function jobsFile(): string {
   return path.join(config.dataDir, "jobs.json");
@@ -165,13 +191,74 @@ function describeRunSettings(mode: AgentMode, model?: AgentModelSelection): stri
 async function persist(): Promise<void> {
   await fs.mkdir(config.dataDir, { recursive: true });
   const records = [...jobs.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-  await fs.writeFile(jobsFile(), JSON.stringify(records, null, 2), "utf8");
+  await fs.writeFile(jobsFile(), JSON.stringify(records), "utf8");
 }
 
-function schedulePersist(): void {
+function enqueuePersist(): void {
   writeChain = writeChain.then(persist).catch((error) => {
     console.error("保存任务状态失败", error);
   });
+}
+
+function clearPersistTimer(): void {
+  if (!persistTimer) return;
+  clearTimeout(persistTimer);
+  persistTimer = null;
+}
+
+function schedulePersist(immediate = false): void {
+  if (immediate) {
+    persistDirtySince = 0;
+    clearPersistTimer();
+    enqueuePersist();
+    return;
+  }
+
+  const nowMs = Date.now();
+  if (!persistDirtySince) persistDirtySince = nowMs;
+  const waited = nowMs - persistDirtySince;
+  const delay = Math.max(0, Math.min(PERSIST_DEBOUNCE_MS, PERSIST_MAX_DELAY_MS - waited));
+  clearPersistTimer();
+  persistTimer = setTimeout(() => {
+    persistTimer = null;
+    persistDirtySince = 0;
+    enqueuePersist();
+  }, delay);
+}
+
+export async function flushJobs(): Promise<void> {
+  persistDirtySince = 0;
+  clearPersistTimer();
+  enqueuePersist();
+  await writeChain;
+}
+
+function toJobSummary(job: JobRecord): JobSummary {
+  return {
+    id: job.id,
+    project: job.project,
+    promptSummary: job.promptSummary,
+    status: job.status,
+    createdAt: job.createdAt,
+    updatedAt: job.updatedAt,
+    startedAt: job.startedAt,
+    finishedAt: job.finishedAt,
+    mode: job.mode,
+    model: job.model,
+    extraProjects: job.extraProjects,
+    sandbox: job.sandbox,
+    autoReview: job.autoReview,
+    usage: job.usage,
+    activeTurnId: job.activeTurnId,
+    turns: (job.turns ?? []).map((turn) => ({
+      id: turn.id,
+      status: turn.status,
+      createdAt: turn.createdAt,
+      startedAt: turn.startedAt,
+      finishedAt: turn.finishedAt,
+      mode: turn.mode,
+    })),
+  };
 }
 
 function ensureJobTurns(job: JobRecord): void {
@@ -288,7 +375,7 @@ export async function loadJobs(): Promise<void> {
   }
 
   if (migrateConversationChains()) {
-    schedulePersist();
+    schedulePersist(true);
   }
 }
 
@@ -332,7 +419,7 @@ export function cancelQueuedTurns(jobId: string): JobTurn[] {
     appendJobLog(job.id, "info", "已取消排队中的后续指令。");
     syncJobStatusFromTurns(job);
     job.updatedAt = now();
-    schedulePersist();
+    schedulePersist(true);
   }
 
   return cancelled;
@@ -425,6 +512,7 @@ export function createJob(input: {
 
   jobs.set(job.id, job);
   appendJobLog(job.id, "info", `任务已创建（${describeRunSettings(input.mode, input.model)}），等待执行。`, turn.id);
+  schedulePersist(true);
   return job;
 }
 
@@ -478,13 +566,15 @@ export function enqueueJobTurn(
     message = `已加入排队（${settings}），当前轮次结束后将自动执行。`;
   }
   appendJobLog(job.id, "info", message, turn.id);
+  schedulePersist(true);
   return { job, turn };
 }
 
-export function listJobs(): JobRecord[] {
+export function listJobs(): JobSummary[] {
   return [...jobs.values()]
     .filter((job) => !job.parentJobId)
-    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+    .map(toJobSummary);
 }
 
 export function getJob(id: string): JobRecord | undefined {
@@ -497,7 +587,7 @@ export function updateJob(id: string, patch: Partial<JobRecord>): JobRecord {
 
   Object.assign(job, patch, { updatedAt: now() });
   jobs.set(job.id, job);
-  schedulePersist();
+  schedulePersist(true);
   return job;
 }
 
@@ -513,7 +603,7 @@ export function updateTurn(jobId: string, turnId: string, patch: Partial<JobTurn
   if (patch.model) job.model = patch.model;
   syncJobStatusFromTurns(job);
   job.updatedAt = now();
-  schedulePersist();
+  schedulePersist(true);
   return turn;
 }
 
