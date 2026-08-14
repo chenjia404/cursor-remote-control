@@ -326,8 +326,13 @@ button.small {
 }
 
 .inline-toggle input {
+  flex-shrink: 0;
   margin: 0;
   width: auto;
+}
+
+.inline-toggle span {
+  min-width: 0;
 }
 
 .settings-toggle {
@@ -717,7 +722,9 @@ button.small {
   left: 0;
   max-height: 92vh;
   overflow: auto;
-  padding-bottom: calc(1rem + var(--safe-bottom));
+  padding: calc(0.85rem + env(safe-area-inset-top, 0px))
+    max(1rem, env(safe-area-inset-left, 0px), env(safe-area-inset-right, 0px))
+    calc(1rem + var(--safe-bottom));
   position: absolute;
   right: 0;
 }
@@ -745,7 +752,7 @@ button.small {
 }
 
 .sheet-body {
-  padding: 0 0.15rem 0.5rem;
+  padding-bottom: 0.25rem;
 }
 
 .sheet-project-row {
@@ -753,6 +760,16 @@ button.small {
   display: flex;
   gap: 0.75rem;
   justify-content: space-between;
+  min-width: 0;
+}
+
+.sheet-project-row > div:first-child {
+  flex: 1;
+  min-width: 0;
+}
+
+.sheet-project-row > .ghost {
+  flex-shrink: 0;
 }
 
 .sheet-label {
@@ -796,6 +813,11 @@ button.small {
   display: flex;
   gap: 0.75rem;
   justify-content: space-between;
+  min-width: 0;
+}
+
+.settings-row .lang-switch {
+  flex-shrink: 0;
 }
 
 .settings-version {
