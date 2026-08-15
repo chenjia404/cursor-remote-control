@@ -8,14 +8,16 @@ import type { ExtraProjectRef } from "./agentOptions.js";
 import type { ProjectInfo } from "./projects.js";
 
 export type ScheduleKind = "simple" | "cron";
-export type SimpleFrequency = "daily" | "weekly" | "interval";
+export type SimpleFrequency = "daily" | "weekly" | "monthly" | "interval";
 
 export type SimpleSchedule = {
   frequency: SimpleFrequency;
-  /** 每天 / 每周 的本地时刻，HH:MM */
+  /** 每天 / 每周 / 每月 的本地时刻，HH:MM */
   time?: string;
   /** 0=周日 … 6=周六，与标准 5 段 Cron 一致 */
   weekdays?: number[];
+  /** 每月几号，1–31；没有该日的月份会跳过 */
+  monthDay?: number;
   intervalHours?: number;
 };
 
@@ -97,6 +99,14 @@ function parseTime(value: string | undefined): { hour: number; minute: number } 
   return { hour: Number(match[1]), minute: Number(match[2]) };
 }
 
+function normalizeMonthDay(input: unknown): number {
+  const day = Number(input);
+  if (!Number.isInteger(day) || day < 1 || day > 31) {
+    throw new Error("请填写每月的执行日，范围为 1 到 31");
+  }
+  return day;
+}
+
 function uniqueWeekdays(input: unknown): number[] {
   if (!Array.isArray(input)) return [];
   const next: number[] = [];
@@ -140,6 +150,9 @@ function toCronExpression(schedule: Pick<ScheduleRecord, "kind" | "simple" | "cr
   if (simple.frequency === "daily") {
     return `${minute} ${hour} * * *`;
   }
+  if (simple.frequency === "monthly") {
+    return `${minute} ${hour} ${normalizeMonthDay(simple.monthDay)} * *`;
+  }
 
   const weekdays = uniqueWeekdays(simple.weekdays);
   if (weekdays.length === 0) {
@@ -170,8 +183,8 @@ export function computeNextRunAt(schedule: Pick<ScheduleRecord, "kind" | "simple
 
 function normalizeSimple(input: SimpleSchedule | undefined): SimpleSchedule {
   const frequency = input?.frequency;
-  if (frequency !== "daily" && frequency !== "weekly" && frequency !== "interval") {
-    throw new Error("请选择每天、每周或按小时间隔");
+  if (frequency !== "daily" && frequency !== "weekly" && frequency !== "monthly" && frequency !== "interval") {
+    throw new Error("请选择每天、每周、每月或按小时间隔");
   }
 
   if (frequency === "interval") {
@@ -190,6 +203,10 @@ function normalizeSimple(input: SimpleSchedule | undefined): SimpleSchedule {
       throw new Error("请选择每周的执行日");
     }
     return { frequency, time, weekdays };
+  }
+
+  if (frequency === "monthly") {
+    return { frequency, time, monthDay: normalizeMonthDay(input?.monthDay) };
   }
 
   return { frequency, time };

@@ -7,7 +7,7 @@ import {
   setLocale,
   t,
   translateApiError,
-} from "./i18n.js?v=0.4.1";
+} from "./i18n.js?v=0.4.3";
 
 let markedRef = null;
 let purifyRef = null;
@@ -2890,8 +2890,10 @@ function updateScheduleFrequencyFields() {
   const frequency = $("#scheduleFrequencySelect")?.value || "daily";
   const isInterval = frequency === "interval";
   const isWeekly = frequency === "weekly";
+  const isMonthly = frequency === "monthly";
   $("#scheduleTimeField")?.classList.toggle("hidden", isInterval);
   $("#scheduleWeekdaysField")?.classList.toggle("hidden", !isWeekly);
+  $("#scheduleMonthDayField")?.classList.toggle("hidden", !isMonthly);
   $("#scheduleIntervalField")?.classList.toggle("hidden", !isInterval);
 }
 
@@ -3014,6 +3016,18 @@ function estimateScheduleNextRun() {
     return "";
   }
 
+  if (frequency === "monthly") {
+    const monthDay = Number($("#scheduleMonthDayInput")?.value);
+    if (!Number.isInteger(monthDay) || monthDay < 1 || monthDay > 31) return "";
+    for (let offset = 0; offset < 12; offset += 1) {
+      const candidate = new Date(now.getFullYear(), now.getMonth() + offset, monthDay, hour, minute, 0, 0);
+      if (candidate.getDate() !== monthDay) continue;
+      if (candidate.getTime() <= now.getTime()) continue;
+      return t("schedule.next", { time: formatDateTime(candidate.toISOString()) });
+    }
+    return "";
+  }
+
   const next = new Date(now);
   next.setHours(hour, minute, 0, 0);
   if (next.getTime() <= now.getTime()) next.setDate(next.getDate() + 1);
@@ -3033,6 +3047,9 @@ function describeSchedule(schedule) {
   if (simple.frequency === "weekly") {
     const days = (simple.weekdays || []).map((day) => t(`schedule.weekday.${day}`)).join("");
     return `${t("schedule.weekly")} ${days} ${simple.time || ""}`.trim();
+  }
+  if (simple.frequency === "monthly") {
+    return t("schedule.monthlySummary", { day: simple.monthDay, time: simple.time || "" });
   }
   return `${t("schedule.daily")} ${simple.time || ""}`.trim();
 }
@@ -3080,6 +3097,7 @@ function renderSchedules() {
           <div class="schedule-item-actions">
             ${canManage ? `<button type="button" class="ghost small" data-schedule-run="${escapeHtml(schedule.id)}">${escapeHtml(t("schedule.run"))}</button>` : ""}
             ${canManage ? `<button type="button" class="ghost small" data-schedule-edit="${escapeHtml(schedule.id)}">${escapeHtml(t("schedule.edit"))}</button>` : ""}
+            ${canManage ? `<button type="button" class="ghost small danger" data-schedule-delete="${escapeHtml(schedule.id)}">${escapeHtml(t("schedule.delete"))}</button>` : ""}
           </div>
         </article>
       `;
@@ -3100,6 +3118,7 @@ function resetScheduleForm() {
   $("#scheduleResumeToggle").checked = false;
   $("#scheduleFrequencySelect").value = "daily";
   $("#scheduleTimeInput").value = "03:00";
+  $("#scheduleMonthDayInput").value = String(new Date().getDate());
   $("#scheduleIntervalInput").value = "6";
   $("#scheduleCronInput").value = "";
   $("#schedulePromptInput").value = "";
@@ -3136,6 +3155,7 @@ function fillScheduleForm(schedule) {
     const simple = schedule.simple || { frequency: "daily", time: "03:00" };
     $("#scheduleFrequencySelect").value = simple.frequency || "daily";
     $("#scheduleTimeInput").value = simple.time || "03:00";
+    $("#scheduleMonthDayInput").value = String(simple.monthDay || new Date().getDate());
     $("#scheduleIntervalInput").value = String(simple.intervalHours || 6);
     renderScheduleWeekdays(simple.weekdays || []);
   }
@@ -3202,6 +3222,7 @@ function collectSchedulePayload() {
       frequency,
       time: rawTime.slice(0, 5),
       weekdays: collectScheduleWeekdays(),
+      monthDay: Number($("#scheduleMonthDayInput")?.value || 1),
       intervalHours: Number($("#scheduleIntervalInput")?.value || 6),
     };
   }
@@ -3223,6 +3244,26 @@ async function saveSchedule() {
   showToast(t("schedule.saved"));
   await refreshData();
   return result.schedule;
+}
+
+const removingScheduleIds = new Set();
+
+async function removeSchedule(scheduleId) {
+  if (!scheduleId || removingScheduleIds.has(scheduleId)) return false;
+  removingScheduleIds.add(scheduleId);
+  try {
+    if (!window.confirm(t("schedule.deleteConfirm"))) return false;
+    await api(`/api/schedules/${scheduleId}`, { method: "DELETE" });
+    if (state.editingScheduleId === scheduleId) {
+      closeSheet("scheduleSheet");
+      state.editingScheduleId = "";
+    }
+    showToast(t("schedule.deleted"));
+    await refreshData();
+    return true;
+  } finally {
+    removingScheduleIds.delete(scheduleId);
+  }
 }
 
 async function runSchedule(scheduleId) {
@@ -3535,6 +3576,7 @@ on("#scheduleFrequencySelect", "change", () => {
 });
 
 on("#scheduleTimeInput", "change", () => updateScheduleNextPreview());
+on("#scheduleMonthDayInput", "input", () => updateScheduleNextPreview());
 on("#scheduleIntervalInput", "input", () => updateScheduleNextPreview());
 on("#scheduleCronInput", "input", () => updateScheduleNextPreview());
 
@@ -3576,12 +3618,8 @@ on("#scheduleForm", "submit", async (event) => {
 on("#scheduleDeleteButton", "click", async () => {
   const id = state.editingScheduleId;
   if (!id) return;
-  if (!window.confirm(t("schedule.deleteConfirm"))) return;
   try {
-    await api(`/api/schedules/${id}`, { method: "DELETE" });
-    closeSheet("scheduleSheet");
-    showToast(t("schedule.deleted"));
-    await refreshData();
+    await removeSchedule(id);
   } catch (error) {
     showToast(error.message);
   }
@@ -3609,6 +3647,17 @@ on("#scheduleList", "click", async (event) => {
     event.stopPropagation();
     try {
       await runSchedule(runButton.dataset.scheduleRun);
+    } catch (error) {
+      showToast(error.message);
+    }
+    return;
+  }
+
+  const deleteButton = event.target.closest("[data-schedule-delete]");
+  if (deleteButton) {
+    event.stopPropagation();
+    try {
+      await removeSchedule(deleteButton.dataset.scheduleDelete);
     } catch (error) {
       showToast(error.message);
     }

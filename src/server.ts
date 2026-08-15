@@ -138,9 +138,10 @@ const followUpSchema = z.object({
 });
 
 const simpleScheduleSchema = z.object({
-  frequency: z.enum(["daily", "weekly", "interval"]),
+  frequency: z.enum(["daily", "weekly", "monthly", "interval"]),
   time: z.string().max(8).optional(),
   weekdays: z.array(z.number().int().min(0).max(6)).max(7).optional(),
+  monthDay: z.number().int().min(1).max(31).optional(),
   intervalHours: z.number().int().min(1).max(168).optional(),
 });
 

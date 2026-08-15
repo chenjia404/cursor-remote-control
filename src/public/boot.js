@@ -4,7 +4,7 @@
 (function () {
   var SESSION_KEY = "crc_session_token";
   var CSRF_KEY = "crc_csrf_token";
-  var APP_VERSION = "0.4.1";
+  var APP_VERSION = "0.4.3";
   var csrfToken = "";
   var sessionToken = "";
   var appLoadPromise = null;
