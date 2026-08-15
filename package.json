@@ -1,6 +1,6 @@
 {
   "name": "cursor-remote-control",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "private": true,
   "type": "module",
   "scripts": {
@@ -8,6 +8,7 @@
     "start": "node dist/src/server.js",
     "build": "tsc",
     "typecheck": "tsc --noEmit",
+    "lint": "eslint src/public --max-warnings 0",
     "init-admin": "tsx scripts/init-admin.ts",
     "generate-icons": "tsx scripts/generate-icons.ts",
     "autostart:install": "pwsh -NoProfile -File scripts/install-autostart.ps1",
@@ -30,7 +31,10 @@
     "zod": "latest"
   },
   "devDependencies": {
+    "@eslint/js": "^10.0.1",
     "@types/node": "latest",
+    "eslint": "^10.8.1",
+    "globals": "^17.11.0",
     "sharp": "^0.35.3",
     "tsx": "latest",
     "typescript": "latest"

@@ -21,6 +21,7 @@
 ```powershell
 cd D:\code\cursor-remote-control
 pnpm install
+pnpm lint
 pnpm typecheck
 pnpm build
 pnpm start
@@ -87,7 +88,7 @@ pnpm generate-icons
 - 所有回复、注释和文档使用简体中文。
 - Node 项目使用 pnpm，不要切换到 npm 或 yarn。
 - 保持实现简单，优先沿用当前 Fastify + 原生前端结构。
-- 修改后至少运行 `pnpm typecheck` 和 `pnpm build`。
+- 修改后至少运行 `pnpm lint`、`pnpm typecheck` 和 `pnpm build`。改 `src/public` 下的页面脚本时必须跑 lint：这些文件不走 tsc，语法错误会让整页提示「应用脚本加载失败」。
 - 如果改动 PWA 缓存资源，记得更新 `src/public/sw.js` 的 `CACHE_NAME` 或确认缓存更新策略不会让旧资源长期留存。
 - 如果新增前端静态资源，确认它能被 `@fastify/static` 从 `src/public` 正确托管。
 - 如果改动生产启动路径，确认 `pnpm build` 后 `pnpm start` 使用的文件路径仍然正确。

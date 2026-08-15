@@ -679,7 +679,7 @@ const apiErrorKeys = {
   请输入定时任务指令: "api.schedulePromptRequired",
   定时任务指令过长: "api.schedulePromptTooLong",
   "Cron 表达式需为 5 段，例如 0 3 * * 1": "api.scheduleCronFormat",
-  无效的 Cron 表达式: "api.scheduleCronInvalid",
+  "无效的 Cron 表达式": "api.scheduleCronInvalid",
   无法计算下次执行时间: "api.scheduleNextFailed",
   请选择每周的执行日: "api.scheduleWeekdays",
   "请填写有效的执行时刻，格式为 HH:MM": "api.scheduleTime",

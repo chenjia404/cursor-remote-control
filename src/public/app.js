@@ -7,7 +7,7 @@ import {
   setLocale,
   t,
   translateApiError,
-} from "./i18n.js?v=0.4.0";
+} from "./i18n.js?v=0.4.1";
 
 let markedRef = null;
 let purifyRef = null;
@@ -970,10 +970,12 @@ function bindModelSettings(kind) {
     const variant = event.target.closest("[data-model-variant]");
     if (variant) {
       let params = [];
-      try {
-        params = variant.value ? JSON.parse(variant.value) : [];
-      } catch {
-        params = [];
+      if (variant.value) {
+        try {
+          params = JSON.parse(variant.value);
+        } catch {
+          params = [];
+        }
       }
       renderModelParams(kind, { id: select.value, params });
     }
