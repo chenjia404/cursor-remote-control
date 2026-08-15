@@ -7,7 +7,7 @@ import {
   setLocale,
   t,
   translateApiError,
-} from "./i18n.js?v=0.3.0";
+} from "./i18n.js?v=0.4.0";
 
 let markedRef = null;
 let purifyRef = null;
@@ -145,6 +145,10 @@ const state = {
   permissionCatalog: [],
   roleDefaults: {},
   editingUserId: "",
+  schedules: [],
+  editingScheduleId: "",
+  scheduleProjectId: "",
+  scheduleExtraProjectIds: [],
 };
 
 initLocale();
@@ -208,6 +212,7 @@ function applyAuthUi() {
 
   $("#headerNewTaskButton")?.classList.toggle("hidden", !canCreate);
   $("#sessionNewTaskButton")?.classList.toggle("hidden", !canCreate);
+  $("#newScheduleButton")?.classList.toggle("hidden", !canCreate);
   $("#browseOpenButton")?.classList.toggle("hidden", !canBrowse);
   $("#browseSelectButton")?.classList.toggle("hidden", !canSelect);
   $("#usersManageButton")?.classList.toggle("hidden", !canManageUsers);
@@ -247,19 +252,29 @@ function applyLocale(locale) {
   updateLangSwitch();
   renderProjectList();
   renderJobs();
+  renderSchedules();
   renderBrowsePanel();
   renderCurrentJob(state.currentJob);
   updateContextHeader();
   updateNewTaskProjectLabel();
+  updateScheduleProjectLabel();
+  renderScheduleProjectPicker();
   renderModelSettings("submit");
   renderModelSettings("followUp");
+  renderModelSettings("schedule");
   renderExtraWorkspaces();
+  renderScheduleExtraWorkspaces();
   renderDisallowedTools("submit", collectDisallowedTools("submit"));
   applyAuthUi();
   renderUserList();
   renderUserEditForm();
   renderDisallowedTools("followUp", collectDisallowedTools("followUp"));
+  renderDisallowedTools("schedule", collectDisallowedTools("schedule"));
+  renderScheduleWeekdays(collectScheduleWeekdays());
+  renderSchedulePromptChips();
+  updateScheduleNextPreview();
   syncModeSegmentFromSelect();
+  syncScheduleModeSegment();
   updateFilterChips();
   updateOnboardingVisibility();
 }
@@ -331,8 +346,38 @@ function saveAgentOptions(options) {
   }
 }
 
+function modelFieldIds(kind) {
+  if (kind === "followUp") return { select: "#followUpModelSelect", params: "#followUpModelParams" };
+  if (kind === "schedule") return { select: "#scheduleModelSelect", params: "#scheduleModelParams" };
+  return { select: "#modelSelect", params: "#modelParams" };
+}
+
+function agentFieldIds(kind) {
+  if (kind === "followUp") {
+    return {
+      load: "#followUpLoadLocalSettingsToggle",
+      sandbox: "#followUpSandboxToggle",
+      autoReview: "#followUpAutoReviewToggle",
+    };
+  }
+  if (kind === "schedule") {
+    return {
+      load: "#scheduleLoadLocalSettingsToggle",
+      sandbox: "#scheduleSandboxToggle",
+      autoReview: "#scheduleAutoReviewToggle",
+    };
+  }
+  return {
+    load: "#loadLocalSettingsToggle",
+    sandbox: "#sandboxToggle",
+    autoReview: "#autoReviewToggle",
+  };
+}
+
 function toolToggleSelector(kind) {
-  return kind === "followUp" ? "#followUpDisallowedTools" : "#disallowedTools";
+  if (kind === "followUp") return "#followUpDisallowedTools";
+  if (kind === "schedule") return "#scheduleDisallowedTools";
+  return "#disallowedTools";
 }
 
 function renderDisallowedTools(kind, selected = []) {
@@ -370,28 +415,35 @@ function renderExtraWorkspaces() {
 }
 
 function collectAgentOptions(kind) {
-  const prefix = kind === "followUp" ? "followUp" : "";
-  const loadToggle = $(prefix ? "#followUpLoadLocalSettingsToggle" : "#loadLocalSettingsToggle");
-  const sandboxToggle = $(prefix ? "#followUpSandboxToggle" : "#sandboxToggle");
-  const autoReviewToggle = $(prefix ? "#followUpAutoReviewToggle" : "#autoReviewToggle");
+  const fields = agentFieldIds(kind);
+  const loadToggle = $(fields.load);
+  const sandboxToggle = $(fields.sandbox);
+  const autoReviewToggle = $(fields.autoReview);
+  const extraIds = kind === "schedule" ? state.scheduleExtraProjectIds : state.extraProjectIds;
   return {
     loadLocalSettings: Boolean(loadToggle?.checked),
     sandbox: Boolean(sandboxToggle?.checked),
     autoReview: Boolean(autoReviewToggle?.checked),
     disallowedTools: collectDisallowedTools(kind),
-    extraProjectIds: kind === "followUp" ? [] : [...state.extraProjectIds],
+    extraProjectIds: kind === "followUp" ? [] : [...extraIds],
   };
 }
 
 function applyAgentOptions(kind, options) {
-  const prefix = kind === "followUp" ? "followUp" : "";
-  const loadToggle = $(prefix ? "#followUpLoadLocalSettingsToggle" : "#loadLocalSettingsToggle");
-  const sandboxToggle = $(prefix ? "#followUpSandboxToggle" : "#sandboxToggle");
-  const autoReviewToggle = $(prefix ? "#followUpAutoReviewToggle" : "#autoReviewToggle");
+  const fields = agentFieldIds(kind);
+  const loadToggle = $(fields.load);
+  const sandboxToggle = $(fields.sandbox);
+  const autoReviewToggle = $(fields.autoReview);
   if (loadToggle) loadToggle.checked = options.loadLocalSettings !== false;
   if (sandboxToggle) sandboxToggle.checked = Boolean(options.sandbox);
   if (autoReviewToggle) autoReviewToggle.checked = Boolean(options.autoReview);
   renderDisallowedTools(kind, options.disallowedTools || []);
+  if (kind === "schedule") {
+    const projectId = state.scheduleProjectId || state.selectedProjectId;
+    state.scheduleExtraProjectIds = (options.extraProjectIds || []).filter((id) => id !== projectId);
+    renderScheduleExtraWorkspaces();
+    return;
+  }
   if (kind !== "followUp") {
     state.extraProjectIds = (options.extraProjectIds || []).filter((id) => id !== state.selectedProjectId);
     renderExtraWorkspaces();
@@ -500,7 +552,7 @@ function formatUsage(usage) {
 function loadSavedTab() {
   try {
     const saved = readPref(TAB_STORAGE_KEY);
-    if (saved === "session" || saved === "history" || saved === "projects") return saved;
+    if (saved === "session" || saved === "history" || saved === "projects" || saved === "schedules") return saved;
   } catch {
     // localStorage 不可用时忽略
   }
@@ -623,7 +675,7 @@ function saveSelectedProjectId(projectId) {
 }
 
 function switchTab(tabId) {
-  let tab = tabId === "history" || tabId === "projects" ? tabId : "session";
+  let tab = tabId === "history" || tabId === "projects" || tabId === "schedules" ? tabId : "session";
   if (isWideLayout() && tab === "history") {
     tab = "session";
   }
@@ -667,6 +719,7 @@ function closeSheet(sheetId) {
 function closeAllSheets() {
   closeSheet("newTaskSheet");
   closeSheet("settingsSheet");
+  closeSheet("scheduleSheet");
 }
 
 function getModeFromSelect(select) {
@@ -682,7 +735,7 @@ function setModeSelect(select, mode) {
 
 function syncModeSegmentFromSelect() {
   const mode = getModeFromSelect($("#modeSelect"));
-  document.querySelectorAll(".mode-segment-btn").forEach((button) => {
+  document.querySelectorAll("#newTaskSheet .mode-segment-btn").forEach((button) => {
     button.classList.toggle("active", button.dataset.mode === mode);
   });
 }
@@ -745,8 +798,9 @@ function saveModelSelection(selection) {
 }
 
 function collectModelSelection(kind) {
-  const select = $(kind === "followUp" ? "#followUpModelSelect" : "#modelSelect");
-  const paramsRoot = $(kind === "followUp" ? "#followUpModelParams" : "#modelParams");
+  const fields = modelFieldIds(kind);
+  const select = $(fields.select);
+  const paramsRoot = $(fields.params);
   const id = select?.value || loadSavedModel().id;
   const params = [...(paramsRoot?.querySelectorAll("[data-model-param]") || [])]
     .map((element) => ({
@@ -758,8 +812,9 @@ function collectModelSelection(kind) {
 }
 
 function applyModelSelection(kind, selection) {
-  const select = $(kind === "followUp" ? "#followUpModelSelect" : "#modelSelect");
-  const paramsRoot = $(kind === "followUp" ? "#followUpModelParams" : "#modelParams");
+  const fields = modelFieldIds(kind);
+  const select = $(fields.select);
+  const paramsRoot = $(fields.params);
   if (!select || !paramsRoot) return;
 
   const fallback = loadSavedModel();
@@ -787,7 +842,7 @@ function matchingVariantValue(model, params) {
 }
 
 function renderModelParams(kind, selection) {
-  const paramsRoot = $(kind === "followUp" ? "#followUpModelParams" : "#modelParams");
+  const paramsRoot = $(modelFieldIds(kind).params);
   if (!paramsRoot) return;
 
   const model = findCatalogModel(selection?.id);
@@ -837,7 +892,7 @@ function renderModelParams(kind, selection) {
 }
 
 function renderModelSettings(kind) {
-  const select = $(kind === "followUp" ? "#followUpModelSelect" : "#modelSelect");
+  const select = $(modelFieldIds(kind).select);
   if (!select) return;
 
   const previous = collectModelSelection(kind);
@@ -876,6 +931,7 @@ function applyModels(models, defaultModel) {
   if (nextIds !== prevIds || selectEmpty) {
     renderModelSettings("submit");
     renderModelSettings("followUp");
+    renderModelSettings("schedule");
   }
 }
 
@@ -901,8 +957,9 @@ async function loadModels(retry = true) {
 }
 
 function bindModelSettings(kind) {
-  const select = $(kind === "followUp" ? "#followUpModelSelect" : "#modelSelect");
-  const paramsRoot = $(kind === "followUp" ? "#followUpModelParams" : "#modelParams");
+  const fields = modelFieldIds(kind);
+  const select = $(fields.select);
+  const paramsRoot = $(fields.params);
   select?.addEventListener("change", () => {
     const model = findCatalogModel(select.value);
     const next = { id: select.value, params: defaultParamsForModel(model) };
@@ -999,11 +1056,15 @@ function stripCredentialsFromUrl() {
 function setLoggedIn(loggedIn) {
   $("#loginView").classList.toggle("hidden", loggedIn);
   $("#appView").classList.toggle("hidden", !loggedIn);
-  if (!loggedIn && state.inChat) {
-    state.inChat = false;
-    state.currentJobId = "";
-    state.currentJob = null;
-    updateChatMode();
+  if (!loggedIn) {
+    stopJobEventStream();
+    stopPollingCurrentJob();
+    if (state.inChat) {
+      state.inChat = false;
+      state.currentJobId = "";
+      state.currentJob = null;
+      updateChatMode();
+    }
   }
 }
 
@@ -1483,6 +1544,7 @@ function bindPullToRefresh(zone, indicator, onRefresh, getScrollEl) {
 function setupPullToRefresh() {
   bindPullToRefresh($("#historyPullZone"), $("#historyPullIndicator"), () => refreshData());
   bindPullToRefresh($("#projectsPullZone"), $("#projectsPullIndicator"), () => refreshData());
+  bindPullToRefresh($("#schedulesPullZone"), $("#schedulesPullIndicator"), () => refreshData());
   bindPullToRefresh($("#sessionPullZone"), $("#sessionPullIndicator"), async () => {
     if (state.currentJobId) {
       await refreshCurrentJob();
@@ -1499,7 +1561,7 @@ function rememberHomeTab() {
   if (state.inChat) return;
   let tab = state.activeTab;
   if (isWideLayout() && tab === "history") tab = "session";
-  state.homeTab = tab === "history" || tab === "projects" ? tab : "session";
+  state.homeTab = tab === "history" || tab === "projects" || tab === "schedules" ? tab : "session";
 }
 
 function updateChatMode() {
@@ -1539,6 +1601,7 @@ function enterChat() {
 function leaveChat({ fromPopstate = false } = {}) {
   if (!state.inChat) return;
   state.inChat = false;
+  stopJobEventStream();
   rememberFollowUpDraft();
   state.currentJobId = "";
   closeAllSheets();
@@ -1562,6 +1625,8 @@ function leaveChat({ fromPopstate = false } = {}) {
       suppressChatPopstate = false;
     }
   }
+  if (shouldKeepPolling()) startPollingCurrentJob();
+  else stopPollingCurrentJob();
 }
 
 function updateContextHeader(job = state.currentJob) {
@@ -1597,6 +1662,13 @@ function updateContextHeader(job = state.currentJob) {
     return;
   }
 
+  if (state.activeTab === "schedules") {
+    eyebrow.textContent = t("nav.schedules");
+    title.textContent = t("nav.schedules");
+    status.classList.add("hidden");
+    return;
+  }
+
   eyebrow.textContent = t("nav.session");
   title.textContent = t("session.empty");
   status.classList.add("hidden");
@@ -1628,11 +1700,14 @@ function renderJobs() {
       const archived = state.archivedJobIds.has(job.id);
       const archiveLabel = archived ? t("history.unarchive") : t("history.archive");
       const archivedBadge = archived ? `<span class="mode-badge">${escapeHtml(t("history.archived"))}</span>` : "";
+      const scheduledBadge = job.scheduleId
+        ? `<span class="mode-badge mode-scheduled">${escapeHtml(t("history.scheduled"))}</span>`
+        : "";
       return `
         <article class="job-item${activeClass}" data-job-id="${job.id}">
           <div class="job-item-summary">
-            <strong>${escapeHtml(job.project.name)}${archivedBadge}<span class="status status-${job.status}">${statusText(job.status)}</span>${modeBadge(job.mode)}${formatModelBadge(job.model)}</strong>
-            <div>${escapeHtml(job.promptSummary)}</div>
+            <strong><span class="job-item-name">${escapeHtml(job.project.name)}</span>${archivedBadge}${scheduledBadge}<span class="status status-${job.status}">${statusText(job.status)}</span>${modeBadge(job.mode)}${formatModelBadge(job.model)}</strong>
+            <div class="job-item-prompt">${escapeHtml(job.promptSummary)}</div>
             <div class="meta">${escapeHtml(formatDateTime(job.createdAt))}${
               hasPerm("jobs.viewAll") && job.submittedBy
                 ? ` · ${escapeHtml(t("history.submittedBy", { name: job.submittedBy }))}`
@@ -1733,6 +1808,8 @@ async function openJob(jobId) {
   enterChat();
   if (sameJob) {
     renderCurrentJob(state.currentJob);
+    startJobEventStream(jobId);
+    startPollingCurrentJob();
     return;
   }
 
@@ -1740,7 +1817,9 @@ async function openJob(jobId) {
   if (cached) renderCurrentJob(cached);
   const chatOutput = $("#chatOutput");
   if (chatOutput) delete chatOutput.dataset.ready;
-  await refreshCurrentJob();
+  startJobEventStream(jobId);
+  if (!cached) await refreshCurrentJob();
+  else startPollingCurrentJob();
 }
 
 function canFollowUp(job) {
@@ -1961,85 +2040,77 @@ function isChatNearBottom(output) {
   return output.scrollHeight - output.scrollTop - output.clientHeight < 80;
 }
 
-function renderChatMessages(job) {
-  const output = $("#chatOutput");
-  if (!job) {
-    output.innerHTML = "";
-    return;
+function renderChatMessageHtml(message) {
+  const time = formatTime(message.time);
+  if (message.role === "system") {
+    return `
+      <div class="chat-system chat-system-${message.level}">
+        <span>${escapeHtml(message.text)}</span>
+        <time>${escapeHtml(time)}</time>
+      </div>
+    `;
   }
 
-  const messages = buildChatMessages(job);
-  if (messages.length === 0) {
-    output.innerHTML = `<p class="empty">${escapeHtml(t("session.noChat"))}</p>`;
-    return;
-  }
-
-  const wasNearBottom = isChatNearBottom(output);
-
-  output.innerHTML = messages
-    .map((message) => {
-      const time = formatTime(message.time);
-      if (message.role === "system") {
-        return `
-          <div class="chat-system chat-system-${message.level}">
-            <span>${escapeHtml(message.text)}</span>
+  if (message.role === "thinking") {
+    return `
+      <div class="chat-row chat-left">
+        <details class="chat-thinking" open>
+          <summary>
+            <span>${escapeHtml(t("session.thinking"))}</span>
             <time>${escapeHtml(time)}</time>
-          </div>
-        `;
-      }
+          </summary>
+          ${formatChatBody("thinking", message.text)}
+        </details>
+      </div>
+    `;
+  }
 
-      if (message.role === "thinking") {
-        return `
-          <div class="chat-row chat-left">
-            <details class="chat-thinking" open>
-              <summary>
-                <span>${escapeHtml(t("session.thinking"))}</span>
-                <time>${escapeHtml(time)}</time>
-              </summary>
-              ${formatChatBody("thinking", message.text)}
-            </details>
-          </div>
-        `;
-      }
+  if (message.role === "tool") {
+    const [title, ...rest] = String(message.text || "").split("\n");
+    return `
+      <div class="chat-row chat-left">
+        <details class="chat-tool">
+          <summary>
+            <span>${escapeHtml(title || t("session.tool"))}</span>
+            <time>${escapeHtml(time)}</time>
+          </summary>
+          ${rest.length ? `<div class="chat-text">${escapeHtml(rest.join("\n"))}</div>` : ""}
+        </details>
+      </div>
+    `;
+  }
 
-      if (message.role === "tool") {
-        const [title, ...rest] = String(message.text || "").split("\n");
-        return `
-          <div class="chat-row chat-left">
-            <details class="chat-tool">
-              <summary>
-                <span>${escapeHtml(title || t("session.tool"))}</span>
-                <time>${escapeHtml(time)}</time>
-              </summary>
-              ${rest.length ? `<div class="chat-text">${escapeHtml(rest.join("\n"))}</div>` : ""}
-            </details>
-          </div>
-        `;
-      }
-
-      const side = message.role === "user" ? "right" : "left";
-      const label = message.role === "user" ? t("session.me") : t("session.ai");
-      const images = (message.images || [])
-        .map(
-          (image) =>
-            `<a href="/api/jobs/${escapeHtml(message.jobId)}/images/${escapeHtml(image.id)}" target="_blank" rel="noopener"><img src="/api/jobs/${escapeHtml(message.jobId)}/images/${escapeHtml(image.id)}" alt="" /></a>`,
-        )
-        .join("");
-      return `
-        <div class="chat-row chat-${side}">
-          <div class="chat-bubble chat-bubble-${message.role}">
-            <div class="chat-meta">
-              <span>${escapeHtml(label)}</span>
-              <time>${escapeHtml(time)}</time>
-            </div>
-            ${images ? `<div class="chat-images">${images}</div>` : ""}
-            ${message.text?.trim() ? formatChatBody(message.role, message.text) : ""}
-          </div>
-        </div>
-      `;
-    })
+  const side = message.role === "user" ? "right" : "left";
+  const label = message.role === "user" ? t("session.me") : t("session.ai");
+  const images = (message.images || [])
+    .map(
+      (image) =>
+        `<a href="/api/jobs/${escapeHtml(message.jobId)}/images/${escapeHtml(image.id)}" target="_blank" rel="noopener"><img src="/api/jobs/${escapeHtml(message.jobId)}/images/${escapeHtml(image.id)}" alt="" /></a>`,
+    )
     .join("");
+  return `
+    <div class="chat-row chat-${side}">
+      <div class="chat-bubble chat-bubble-${message.role}">
+        <div class="chat-meta">
+          <span>${escapeHtml(label)}</span>
+          <time>${escapeHtml(time)}</time>
+        </div>
+        ${images ? `<div class="chat-images">${images}</div>` : ""}
+        ${message.text?.trim() ? formatChatBody(message.role, message.text) : ""}
+      </div>
+    </div>
+  `;
+}
 
+function rememberChatRender(output, jobId, messages) {
+  const last = messages.at(-1);
+  output.dataset.jobId = jobId;
+  output.dataset.msgCount = String(messages.length);
+  output.dataset.lastRole = last?.role || "";
+  output.dataset.lastLen = String(last?.text?.length ?? 0);
+}
+
+function finishChatScroll(output, wasNearBottom) {
   const fab = $("#newMessagesFab");
   if (wasNearBottom || state.chatPinnedToBottom) {
     output.scrollTop = output.scrollHeight;
@@ -2050,7 +2121,137 @@ function renderChatMessages(job) {
   }
 }
 
-function renderCurrentJob(job) {
+let pendingMarkdown = null;
+let markdownFlushTimer = null;
+let lastMarkdownAt = 0;
+
+function clearPendingMarkdown() {
+  if (markdownFlushTimer) {
+    window.clearTimeout(markdownFlushTimer);
+    markdownFlushTimer = null;
+  }
+  pendingMarkdown = null;
+}
+
+function flushPendingMarkdown() {
+  markdownFlushTimer = null;
+  lastMarkdownAt = Date.now();
+  if (!pendingMarkdown) return;
+  const { body, text } = pendingMarkdown;
+  pendingMarkdown = null;
+  if (body.isConnected) body.innerHTML = renderMarkdown(text);
+}
+
+function setMarkdownBody(body, text) {
+  pendingMarkdown = { body, text };
+  const waited = Date.now() - lastMarkdownAt;
+  if (waited >= 80) {
+    flushPendingMarkdown();
+    return;
+  }
+  if (!markdownFlushTimer) {
+    markdownFlushTimer = window.setTimeout(flushPendingMarkdown, 80 - waited);
+  }
+}
+
+function updateLastChatElement(el, message) {
+  const time = formatTime(message.time);
+  el.querySelectorAll("time").forEach((node) => {
+    node.textContent = time;
+  });
+
+  if (message.role === "system") {
+    const span = el.querySelector("span");
+    if (span) span.textContent = message.text;
+    el.className = `chat-system chat-system-${message.level || "info"}`;
+    return;
+  }
+
+  if (message.role === "tool") {
+    const [title, ...rest] = String(message.text || "").split("\n");
+    const summarySpan = el.querySelector("summary span");
+    if (summarySpan) summarySpan.textContent = title || t("session.tool");
+    const details = el.querySelector("details");
+    let body = el.querySelector(".chat-text");
+    if (rest.length) {
+      if (body) body.textContent = rest.join("\n");
+      else details?.insertAdjacentHTML("beforeend", `<div class="chat-text">${escapeHtml(rest.join("\n"))}</div>`);
+    } else {
+      body?.remove();
+    }
+    return;
+  }
+
+  const body = el.querySelector(".chat-markdown") || el.querySelector(".chat-text");
+  if (!body) return;
+  if (message.role === "assistant" || message.role === "thinking") {
+    setMarkdownBody(body, message.text);
+    return;
+  }
+  body.textContent = message.text;
+}
+
+function renderChatMessages(job) {
+  const output = $("#chatOutput");
+  if (!job) {
+    clearPendingMarkdown();
+    output.innerHTML = "";
+    delete output.dataset.jobId;
+    delete output.dataset.msgCount;
+    delete output.dataset.lastRole;
+    delete output.dataset.lastLen;
+    return;
+  }
+
+  const messages = buildChatMessages(job);
+  if (messages.length === 0) {
+    clearPendingMarkdown();
+    output.innerHTML = `<p class="empty">${escapeHtml(t("session.noChat"))}</p>`;
+    delete output.dataset.jobId;
+    delete output.dataset.msgCount;
+    return;
+  }
+
+  const wasNearBottom = isChatNearBottom(output);
+  const prevJobId = output.dataset.jobId;
+  const prevCount = Number(output.dataset.msgCount || 0);
+  const last = messages.at(-1);
+  const lastEl = output.lastElementChild;
+  const canPatchLast =
+    prevJobId === job.id &&
+    messages.length === prevCount &&
+    last &&
+    last.role === output.dataset.lastRole &&
+    lastEl &&
+    !output.querySelector(":scope > .empty");
+  const canAppend =
+    prevJobId === job.id &&
+    messages.length === prevCount + 1 &&
+    output.children.length === prevCount &&
+    last &&
+    !output.querySelector(":scope > .empty");
+
+  if (canPatchLast) {
+    updateLastChatElement(lastEl, last);
+    rememberChatRender(output, job.id, messages);
+    finishChatScroll(output, wasNearBottom);
+    return;
+  }
+
+  if (canAppend) {
+    output.insertAdjacentHTML("beforeend", renderChatMessageHtml(last));
+    rememberChatRender(output, job.id, messages);
+    finishChatScroll(output, wasNearBottom);
+    return;
+  }
+
+  clearPendingMarkdown();
+  output.innerHTML = messages.map((message) => renderChatMessageHtml(message)).join("");
+  rememberChatRender(output, job.id, messages);
+  finishChatScroll(output, wasNearBottom);
+}
+
+function renderCurrentJob(job, options = {}) {
   if (job && !state.inChat) return;
   state.currentJob = job || null;
   const empty = $("#sessionEmpty");
@@ -2062,6 +2263,7 @@ function renderCurrentJob(job) {
     summary?.classList.add("hidden");
     chat?.classList.add("hidden");
     summary.innerHTML = "";
+    delete summary.dataset.liveId;
     renderChatMessages(null);
     updateFollowUpComposer(null);
     updateStopButton(null);
@@ -2075,6 +2277,25 @@ function renderCurrentJob(job) {
   summary?.classList.remove("hidden");
   chat?.classList.remove("hidden");
   updateSessionJobLayout(true);
+
+  if (options.live && summary.dataset.liveId === job.id) {
+    const statusEl = summary.querySelector(".status");
+    if (statusEl) {
+      statusEl.className = `status status-${job.status}`;
+      statusEl.textContent = statusText(job.status);
+    }
+    const usageLabel = formatUsage(job.usage);
+    const usageEl = summary.querySelector(".usage-meta");
+    if (usageLabel) {
+      if (usageEl) usageEl.textContent = usageLabel;
+      else summary.querySelector(".session-summary-body")?.insertAdjacentHTML("beforeend", `<p class="usage-meta">${escapeHtml(usageLabel)}</p>`);
+    }
+    renderChatMessages(job);
+    updateFollowUpComposer(job);
+    updateStopButton(job);
+    updateContextHeader(job);
+    return;
+  }
 
   const extraNames = (job.extraProjects || []).map((item) => item.name).filter(Boolean);
   const extraLabel = extraNames.length ? `<p class="meta">${escapeHtml(t("session.extraWorkspaces", { names: extraNames.join("、") }))}</p>` : "";
@@ -2096,6 +2317,7 @@ function renderCurrentJob(job) {
       </div>
     </details>
   `;
+  summary.dataset.liveId = job.id;
   renderChatMessages(job);
   updateFollowUpComposer(job);
   updateStopButton(job);
@@ -2105,6 +2327,13 @@ function renderCurrentJob(job) {
 
 let currentJobPollInFlight = false;
 let jobListPollAt = 0;
+let jobsRenderTimer = null;
+let jobStreamAbort = null;
+let jobStreamJobId = "";
+let jobStreamActive = false;
+let jobStreamReconnectTimer = null;
+let jobStreamGeneration = 0;
+let jobStreamAttempt = 0;
 
 function stopPollingCurrentJob() {
   if (!state.pollingTimer) return;
@@ -2114,6 +2343,196 @@ function stopPollingCurrentJob() {
 
 function shouldKeepPolling() {
   return listBusyJobs().length > 0;
+}
+
+function scheduleRenderJobs(immediate = false) {
+  if (immediate) {
+    if (jobsRenderTimer) {
+      window.clearTimeout(jobsRenderTimer);
+      jobsRenderTimer = null;
+    }
+    renderJobs();
+    return;
+  }
+  if (jobsRenderTimer) return;
+  jobsRenderTimer = window.setTimeout(() => {
+    jobsRenderTimer = null;
+    renderJobs();
+  }, 250);
+}
+
+function applyLiveJob(job, options = {}) {
+  if (!job) return;
+  const previous = findJob(job.id);
+  const statusChanged = previous && previous.status !== job.status;
+  upsertJob(job);
+  if (state.inChat && state.currentJobId === job.id) {
+    renderCurrentJob(job, { live: Boolean(options.live) && !options.replace });
+  }
+  scheduleRenderJobs(Boolean(statusChanged || options.replace));
+  maybeNotifyJobStatus(job);
+}
+
+function applyLiveJobPatch(patch) {
+  const prev = findJob(state.currentJobId) || state.currentJob;
+  if (!prev || !patch) {
+    void refreshCurrentJob();
+    return;
+  }
+  const prevLogs = prev.logs || [];
+  if (patch.logStart > prevLogs.length) {
+    void refreshCurrentJob();
+    return;
+  }
+  applyLiveJob(
+    {
+      ...prev,
+      updatedAt: patch.updatedAt,
+      status: patch.status,
+      startedAt: patch.startedAt ?? prev.startedAt,
+      finishedAt: patch.finishedAt,
+      error: patch.error,
+      result: patch.result,
+      usage: patch.usage ?? prev.usage,
+      activeTurnId: patch.activeTurnId,
+      runId: patch.runId ?? prev.runId,
+      agentId: patch.agentId ?? prev.agentId,
+      mode: patch.mode ?? prev.mode,
+      model: patch.model ?? prev.model,
+      turns: patch.turns ?? prev.turns,
+      logs: prevLogs.slice(0, patch.logStart).concat(patch.logs || []),
+    },
+    { live: true },
+  );
+}
+
+async function consumeSseStream(body, onEvent) {
+  const reader = body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  let eventName = "message";
+  let dataLines = [];
+
+  const dispatch = () => {
+    if (dataLines.length === 0) {
+      eventName = "message";
+      return;
+    }
+    const raw = dataLines.join("\n");
+    dataLines = [];
+    const name = eventName;
+    eventName = "message";
+    if (!raw) return;
+    try {
+      onEvent(name, JSON.parse(raw));
+    } catch {
+      // 忽略心跳或不完整分片
+    }
+  };
+
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true }).replace(/\r\n/g, "\n");
+    let newline = buffer.indexOf("\n");
+    while (newline >= 0) {
+      const line = buffer.slice(0, newline);
+      buffer = buffer.slice(newline + 1);
+      if (line === "") {
+        dispatch();
+      } else if (!line.startsWith(":")) {
+        if (line.startsWith("event:")) eventName = line.slice(6).trim();
+        else if (line.startsWith("data:")) dataLines.push(line.slice(5).replace(/^ /, ""));
+      }
+      newline = buffer.indexOf("\n");
+    }
+  }
+}
+
+function stopJobEventStream() {
+  jobStreamGeneration += 1;
+  jobStreamActive = false;
+  jobStreamJobId = "";
+  jobStreamAttempt = 0;
+  if (jobStreamReconnectTimer) {
+    window.clearTimeout(jobStreamReconnectTimer);
+    jobStreamReconnectTimer = null;
+  }
+  jobStreamAbort?.abort();
+  jobStreamAbort = null;
+}
+
+function scheduleJobStreamReconnect(jobId, generation) {
+  if (generation !== jobStreamGeneration) return;
+  if (!state.inChat || state.currentJobId !== jobId) return;
+  const delay = Math.min(8000, 400 * 2 ** jobStreamAttempt);
+  jobStreamAttempt += 1;
+  jobStreamReconnectTimer = window.setTimeout(() => {
+    jobStreamReconnectTimer = null;
+    if (generation !== jobStreamGeneration) return;
+    if (!state.inChat || state.currentJobId !== jobId) return;
+    void connectJobEventStream(jobId);
+  }, delay);
+  startPollingCurrentJob();
+}
+
+async function connectJobEventStream(jobId) {
+  const generation = jobStreamGeneration;
+  const controller = new AbortController();
+  jobStreamAbort = controller;
+  try {
+    const sessionToken = getSessionToken();
+    const response = await fetch(`/api/jobs/${jobId}/events`, {
+      credentials: "same-origin",
+      cache: "no-store",
+      headers: {
+        Accept: "text/event-stream",
+        ...(state.csrfToken ? { "x-csrf-token": state.csrfToken } : {}),
+        ...(sessionToken
+          ? {
+              Authorization: `Bearer ${sessionToken}`,
+              "x-crc-session": sessionToken,
+            }
+          : {}),
+      },
+      signal: controller.signal,
+    });
+    if (!response.ok || !response.body) {
+      if (response.status === 401 || response.status === 403 || response.status === 404) {
+        jobStreamActive = false;
+        jobStreamAbort = null;
+        startPollingCurrentJob();
+        return;
+      }
+      throw new Error("stream failed");
+    }
+    jobStreamActive = true;
+    jobStreamAttempt = 0;
+    await consumeSseStream(response.body, (event, data) => {
+      if (generation !== jobStreamGeneration) return;
+      if (event === "snapshot" && data.job) applyLiveJob(data.job, { replace: true });
+      if (event === "update" && data.patch) applyLiveJobPatch(data.patch);
+    });
+    throw new Error("stream closed");
+  } catch (error) {
+    if (controller.signal.aborted || generation !== jobStreamGeneration) return;
+    jobStreamActive = false;
+    jobStreamAbort = null;
+    scheduleJobStreamReconnect(jobId, generation);
+  }
+}
+
+function startJobEventStream(jobId) {
+  if (!jobId) return;
+  if (jobStreamJobId === jobId && (jobStreamActive || jobStreamAbort)) return;
+  stopJobEventStream();
+  jobStreamJobId = jobId;
+  void connectJobEventStream(jobId);
+}
+
+function startLiveUpdates(jobId = state.currentJobId) {
+  if (jobId && state.inChat) startJobEventStream(jobId);
+  startPollingCurrentJob();
 }
 
 async function refreshJobList() {
@@ -2132,23 +2551,25 @@ function startPollingCurrentJob() {
     currentJobPollInFlight = true;
     const now = Date.now();
     const tasks = [];
-    if (state.currentJobId) tasks.push(refreshCurrentJob());
+    if (state.currentJobId && state.inChat && !jobStreamActive) {
+      tasks.push(refreshCurrentJob({ fromPoll: true }));
+    }
     if (now - jobListPollAt >= 5000 && shouldKeepPolling()) {
       jobListPollAt = now;
       tasks.push(refreshJobList());
     }
     if (tasks.length === 0) {
       currentJobPollInFlight = false;
-      if (!shouldKeepPolling()) stopPollingCurrentJob();
+      if (!shouldKeepPolling() && (jobStreamActive || !state.inChat)) stopPollingCurrentJob();
       return;
     }
     Promise.all(tasks)
       .catch((error) => showToast(error.message))
       .finally(() => {
         currentJobPollInFlight = false;
-        if (!shouldKeepPolling()) stopPollingCurrentJob();
+        if (!shouldKeepPolling() && (jobStreamActive || !state.inChat)) stopPollingCurrentJob();
       });
-  }, 1000);
+  }, 2000);
 }
 
 async function submitFollowUp(prompt, jobId, delivery = "queue") {
@@ -2210,15 +2631,21 @@ async function submitFollowUp(prompt, jobId, delivery = "queue") {
   renderCurrentJob(updated);
   $("#followUpInput").value = "";
   await refreshData();
-  startPollingCurrentJob();
+  startLiveUpdates(updated.id);
 }
 
 async function refreshData() {
-  const [projectsData, jobsData] = await Promise.all([api("/api/projects"), api("/api/jobs")]);
+  const [projectsData, jobsData, schedulesData] = await Promise.all([
+    api("/api/projects"),
+    api("/api/jobs"),
+    api("/api/schedules"),
+  ]);
   state.projects = projectsData.projects;
   replaceJobList(jobsData.jobs);
+  state.schedules = schedulesData.schedules || [];
   renderProjectList();
   renderJobs();
+  renderSchedules();
   void loadModels();
 
   if (state.currentJobId) {
@@ -2228,7 +2655,7 @@ async function refreshData() {
   }
 }
 
-async function refreshCurrentJob() {
+async function refreshCurrentJob({ fromPoll = false } = {}) {
   if (!state.currentJobId || !state.inChat) return;
 
   const jobId = state.currentJobId;
@@ -2236,15 +2663,15 @@ async function refreshCurrentJob() {
   if (state.currentJobId !== jobId || !state.inChat) return;
   upsertJob(job);
   renderJobs();
-  renderCurrentJob(job);
+  renderCurrentJob(job, { live: fromPoll });
   maybeNotifyJobStatus(job);
 
-  if (shouldKeepPolling()) {
-    startPollingCurrentJob();
+  if (fromPoll) {
+    if (!shouldKeepPolling() && !jobStreamActive) stopPollingCurrentJob();
     return;
   }
 
-  stopPollingCurrentJob();
+  startLiveUpdates(jobId);
 }
 
 async function stopCurrentJob() {
@@ -2432,6 +2859,385 @@ async function openUsersSheet() {
   }
 }
 
+function sameUsername(left, right) {
+  return String(left || "").trim().toLowerCase() === String(right || "").trim().toLowerCase();
+}
+
+function canManageSchedule(schedule) {
+  if (!hasPerm("jobs.create")) return false;
+  if (sameUsername(schedule.ownerUsername, state.auth.username)) return true;
+  return hasPerm("jobs.operateOthers");
+}
+
+function currentScheduleKind() {
+  return $("#scheduleKindSegment .mode-segment-btn.active")?.dataset.kind === "cron" ? "cron" : "simple";
+}
+
+function setScheduleKind(kind) {
+  const next = kind === "cron" ? "cron" : "simple";
+  document.querySelectorAll("#scheduleKindSegment .mode-segment-btn").forEach((button) => {
+    button.classList.toggle("active", button.dataset.kind === next);
+  });
+  $("#scheduleSimpleFields")?.classList.toggle("hidden", next === "cron");
+  $("#scheduleCronField")?.classList.toggle("hidden", next !== "cron");
+  updateScheduleFrequencyFields();
+  updateScheduleNextPreview();
+}
+
+function updateScheduleFrequencyFields() {
+  const frequency = $("#scheduleFrequencySelect")?.value || "daily";
+  const isInterval = frequency === "interval";
+  const isWeekly = frequency === "weekly";
+  $("#scheduleTimeField")?.classList.toggle("hidden", isInterval);
+  $("#scheduleWeekdaysField")?.classList.toggle("hidden", !isWeekly);
+  $("#scheduleIntervalField")?.classList.toggle("hidden", !isInterval);
+}
+
+function renderScheduleWeekdays(selected = []) {
+  const root = $("#scheduleWeekdays");
+  if (!root) return;
+  const chosen = new Set(selected);
+  root.innerHTML = [0, 1, 2, 3, 4, 5, 6]
+    .map((day) => {
+      const active = chosen.has(day) ? " active" : "";
+      return `<button type="button" class="option-chip${active}" data-weekday="${day}">${escapeHtml(t(`schedule.weekday.${day}`))}</button>`;
+    })
+    .join("");
+}
+
+function collectScheduleWeekdays() {
+  return [...document.querySelectorAll("#scheduleWeekdays .option-chip.active")].map((button) => Number(button.dataset.weekday));
+}
+
+function renderSchedulePromptChips() {
+  const root = $("#schedulePromptChips");
+  if (!root) return;
+  root.innerHTML = [
+    ["deps", "schedule.templateDeps"],
+    ["errors", "schedule.templateErrors"],
+  ]
+    .map(
+      ([id, key]) =>
+        `<button type="button" class="option-chip" data-prompt-template="${id}">${escapeHtml(t(key))}</button>`,
+    )
+    .join("");
+}
+
+function renderScheduleExtraWorkspaces() {
+  const root = $("#scheduleExtraWorkspaceList");
+  if (!root) return;
+  const projectId = state.scheduleProjectId || state.selectedProjectId;
+  const others = state.projects.filter((project) => project.id !== projectId);
+  if (others.length === 0) {
+    root.innerHTML = `<p class="hint">${escapeHtml(t("submit.extraWorkspacesEmpty"))}</p>`;
+    return;
+  }
+  const selected = new Set(state.scheduleExtraProjectIds);
+  root.innerHTML = `<span class="sheet-label">${escapeHtml(t("submit.extraWorkspaces"))}</span>${others
+    .map((project) => {
+      const active = selected.has(project.id) ? " active" : "";
+      return `<button type="button" class="option-chip${active}" data-extra-project="${escapeHtml(project.id)}">${escapeHtml(project.name)}</button>`;
+    })
+    .join("")}`;
+}
+
+function updateScheduleProjectLabel() {
+  const label = $("#scheduleProjectName");
+  if (!label) return;
+  const project = state.projects.find((item) => item.id === state.scheduleProjectId);
+  label.textContent = project?.name || t("project.noneSelected");
+}
+
+function renderScheduleProjectPicker() {
+  const root = $("#scheduleProjectPicker");
+  if (!root) return;
+  if (!state.projects.length) {
+    root.innerHTML = `<p class="hint">${escapeHtml(t("submit.projectHintAssigned"))}</p>`;
+    return;
+  }
+  root.innerHTML = state.projects
+    .map((project) => {
+      const active = project.id === state.scheduleProjectId ? " active" : "";
+      return `<button type="button" class="option-chip${active}" data-schedule-project="${escapeHtml(project.id)}">${escapeHtml(project.name)}</button>`;
+    })
+    .join("");
+}
+
+function setScheduleProject(projectId) {
+  if (!projectId || projectId === state.scheduleProjectId) {
+    updateScheduleProjectLabel();
+    renderScheduleProjectPicker();
+    return;
+  }
+  state.scheduleProjectId = projectId;
+  state.scheduleExtraProjectIds = state.scheduleExtraProjectIds.filter((id) => id !== projectId);
+  updateScheduleProjectLabel();
+  renderScheduleExtraWorkspaces();
+  renderScheduleProjectPicker();
+}
+
+function syncScheduleModeSegment() {
+  const mode = getModeFromSelect($("#scheduleModeSelect"));
+  document.querySelectorAll("#scheduleModeSegment .mode-segment-btn").forEach((button) => {
+    button.classList.toggle("active", button.dataset.mode === mode);
+  });
+}
+
+function estimateScheduleNextRun() {
+  if (currentScheduleKind() === "cron") return "";
+  const frequency = $("#scheduleFrequencySelect")?.value || "daily";
+  const now = new Date();
+  if (frequency === "interval") {
+    const hours = Number($("#scheduleIntervalInput")?.value || 6);
+    if (!Number.isInteger(hours) || hours < 1) return "";
+    return t("schedule.next", { time: formatDateTime(new Date(now.getTime() + hours * 3600000).toISOString()) });
+  }
+
+  const time = ($("#scheduleTimeInput")?.value || "03:00").slice(0, 5);
+  const [hour, minute] = time.split(":").map((part) => Number(part));
+  if (!Number.isInteger(hour) || !Number.isInteger(minute)) return "";
+
+  if (frequency === "weekly") {
+    const days = collectScheduleWeekdays();
+    if (!days.length) return "";
+    for (let offset = 0; offset < 8; offset += 1) {
+      const candidate = new Date(now);
+      candidate.setHours(hour, minute, 0, 0);
+      candidate.setDate(now.getDate() + offset);
+      if (candidate.getTime() <= now.getTime()) continue;
+      if (days.includes(candidate.getDay())) {
+        return t("schedule.next", { time: formatDateTime(candidate.toISOString()) });
+      }
+    }
+    return "";
+  }
+
+  const next = new Date(now);
+  next.setHours(hour, minute, 0, 0);
+  if (next.getTime() <= now.getTime()) next.setDate(next.getDate() + 1);
+  return t("schedule.next", { time: formatDateTime(next.toISOString()) });
+}
+
+function updateScheduleNextPreview() {
+  const preview = $("#scheduleNextPreview");
+  if (!preview) return;
+  preview.textContent = estimateScheduleNextRun();
+}
+
+function describeSchedule(schedule) {
+  if (schedule.kind === "cron") return schedule.cronExpr || "cron";
+  const simple = schedule.simple || {};
+  if (simple.frequency === "interval") return t("schedule.interval") + ` · ${simple.intervalHours}h`;
+  if (simple.frequency === "weekly") {
+    const days = (simple.weekdays || []).map((day) => t(`schedule.weekday.${day}`)).join("");
+    return `${t("schedule.weekly")} ${days} ${simple.time || ""}`.trim();
+  }
+  return `${t("schedule.daily")} ${simple.time || ""}`.trim();
+}
+
+function renderSchedules() {
+  const list = $("#scheduleList");
+  if (!list) return;
+  if (!state.schedules.length) {
+    list.innerHTML = `<p class="empty">${escapeHtml(t("schedule.empty"))}</p>`;
+    return;
+  }
+
+  list.innerHTML = state.schedules
+    .map((schedule) => {
+      const canManage = canManageSchedule(schedule);
+      const nextText = schedule.nextRunAt
+        ? t("schedule.next", { time: formatDateTime(schedule.nextRunAt) })
+        : "";
+      const lastText = schedule.lastRunAt
+        ? t("schedule.last", { time: formatDateTime(schedule.lastRunAt) })
+        : t("schedule.never");
+      const owner =
+        hasPerm("jobs.viewAll") && !sameUsername(schedule.ownerUsername, state.auth.username)
+          ? ` · ${escapeHtml(t("schedule.owner", { name: schedule.ownerUsername }))}`
+          : "";
+      const error = schedule.lastError
+        ? `<p class="schedule-error">${escapeHtml(translateApiError(schedule.lastError))}</p>`
+        : "";
+      const disabledBadge = schedule.enabled
+        ? ""
+        : `<span class="mode-badge">${escapeHtml(t("schedule.disabled"))}</span>`;
+      return `
+        <article class="schedule-item${schedule.enabled ? "" : " disabled"}" data-schedule-id="${escapeHtml(schedule.id)}">
+          <div class="schedule-item-top">
+            <div class="schedule-item-title">
+              <strong>${escapeHtml(schedule.name)}${disabledBadge}</strong>
+              <div class="meta">${escapeHtml(schedule.project.name)} · ${escapeHtml(describeSchedule(schedule))}${owner}</div>
+              <div class="meta">${escapeHtml([nextText, lastText].filter(Boolean).join(" · "))}</div>
+            </div>
+            <label class="inline-toggle">
+              <input type="checkbox" data-schedule-enabled="${escapeHtml(schedule.id)}" ${schedule.enabled ? "checked" : ""} ${canManage ? "" : "disabled"} />
+            </label>
+          </div>
+          ${error}
+          <div class="schedule-item-actions">
+            ${canManage ? `<button type="button" class="ghost small" data-schedule-run="${escapeHtml(schedule.id)}">${escapeHtml(t("schedule.run"))}</button>` : ""}
+            ${canManage ? `<button type="button" class="ghost small" data-schedule-edit="${escapeHtml(schedule.id)}">${escapeHtml(t("schedule.edit"))}</button>` : ""}
+          </div>
+        </article>
+      `;
+    })
+    .join("");
+}
+
+function resetScheduleForm() {
+  const form = $("#scheduleForm");
+  if (form) form.reset();
+  state.editingScheduleId = "";
+  state.scheduleProjectId = state.selectedProjectId;
+  state.scheduleExtraProjectIds = [];
+  if (form?.scheduleId) form.scheduleId.value = "";
+  $("#scheduleSheetTitle").textContent = t("schedule.new");
+  $("#scheduleDeleteButton")?.classList.add("hidden");
+  $("#scheduleEnabledToggle").checked = true;
+  $("#scheduleResumeToggle").checked = false;
+  $("#scheduleFrequencySelect").value = "daily";
+  $("#scheduleTimeInput").value = "03:00";
+  $("#scheduleIntervalInput").value = "6";
+  $("#scheduleCronInput").value = "";
+  $("#schedulePromptInput").value = "";
+  setScheduleKind("simple");
+  setModeSelect($("#scheduleModeSelect"), loadSavedMode());
+  syncScheduleModeSegment();
+  applyModelSelection("schedule", loadSavedModel());
+  applyAgentOptions("schedule", loadSavedAgentOptions());
+  renderScheduleWeekdays([new Date().getDay()]);
+  renderSchedulePromptChips();
+  updateScheduleProjectLabel();
+  renderScheduleProjectPicker();
+  $("#scheduleProjectPicker")?.classList.add("hidden");
+  updateScheduleNextPreview();
+}
+
+function fillScheduleForm(schedule) {
+  const form = $("#scheduleForm");
+  if (!form) return;
+  state.editingScheduleId = schedule.id;
+  state.scheduleProjectId = schedule.project.id;
+  state.scheduleExtraProjectIds = (schedule.runOptions?.extraProjects || []).map((item) => item.id);
+  form.scheduleId.value = schedule.id;
+  form.name.value = schedule.name;
+  $("#scheduleSheetTitle").textContent = t("schedule.edit");
+  $("#scheduleDeleteButton")?.classList.toggle("hidden", !canManageSchedule(schedule));
+  $("#scheduleEnabledToggle").checked = schedule.enabled !== false;
+  $("#scheduleResumeToggle").checked = Boolean(schedule.resumeLast);
+  $("#schedulePromptInput").value = schedule.prompt || "";
+  setScheduleKind(schedule.kind);
+  if (schedule.kind === "cron") {
+    $("#scheduleCronInput").value = schedule.cronExpr || "";
+  } else {
+    const simple = schedule.simple || { frequency: "daily", time: "03:00" };
+    $("#scheduleFrequencySelect").value = simple.frequency || "daily";
+    $("#scheduleTimeInput").value = simple.time || "03:00";
+    $("#scheduleIntervalInput").value = String(simple.intervalHours || 6);
+    renderScheduleWeekdays(simple.weekdays || []);
+  }
+  updateScheduleFrequencyFields();
+  setModeSelect($("#scheduleModeSelect"), schedule.runOptions?.mode || loadSavedMode());
+  syncScheduleModeSegment();
+  applyModelSelection("schedule", schedule.runOptions?.model || loadSavedModel());
+  applyAgentOptions("schedule", {
+    loadLocalSettings: schedule.runOptions?.loadLocalSettings,
+    sandbox: schedule.runOptions?.sandbox,
+    autoReview: schedule.runOptions?.autoReview,
+    disallowedTools: schedule.runOptions?.disallowedTools || [],
+    extraProjectIds: state.scheduleExtraProjectIds,
+  });
+  renderSchedulePromptChips();
+  updateScheduleProjectLabel();
+  renderScheduleProjectPicker();
+  $("#scheduleProjectPicker")?.classList.add("hidden");
+  updateScheduleNextPreview();
+}
+
+function openScheduleSheet(schedule) {
+  if (!hasPerm("jobs.create") && !schedule) {
+    showToast(t("api.forbidden"));
+    return;
+  }
+  ensureSelectedProject();
+  if (schedule) fillScheduleForm(schedule);
+  else resetScheduleForm();
+  openSheet("scheduleSheet");
+  window.setTimeout(() => formFieldFocus(), 120);
+}
+
+function formFieldFocus() {
+  const input = $("#scheduleForm")?.name;
+  input?.focus();
+}
+
+function collectSchedulePayload() {
+  const form = $("#scheduleForm");
+  const kind = currentScheduleKind();
+  const frequency = $("#scheduleFrequencySelect")?.value || "daily";
+  const agentOptions = collectAgentOptions("schedule");
+  const payload = {
+    name: form.name.value.trim(),
+    projectId: state.scheduleProjectId || state.selectedProjectId,
+    enabled: Boolean($("#scheduleEnabledToggle")?.checked),
+    kind,
+    prompt: $("#schedulePromptInput")?.value.trim() || "",
+    resumeLast: Boolean($("#scheduleResumeToggle")?.checked),
+    mode: getModeFromSelect($("#scheduleModeSelect")),
+    model: collectModelSelection("schedule"),
+    extraProjectIds: agentOptions.extraProjectIds,
+    loadLocalSettings: agentOptions.loadLocalSettings,
+    sandbox: agentOptions.sandbox,
+    autoReview: agentOptions.autoReview,
+    disallowedTools: agentOptions.disallowedTools,
+  };
+  if (kind === "cron") {
+    payload.cronExpr = $("#scheduleCronInput")?.value.trim() || "";
+  } else {
+    const rawTime = $("#scheduleTimeInput")?.value || "03:00";
+    payload.simple = {
+      frequency,
+      time: rawTime.slice(0, 5),
+      weekdays: collectScheduleWeekdays(),
+      intervalHours: Number($("#scheduleIntervalInput")?.value || 6),
+    };
+  }
+  return payload;
+}
+
+async function saveSchedule() {
+  const payload = collectSchedulePayload();
+  if (!payload.projectId) {
+    showToast(t("toast.selectProject"));
+    switchTab("projects");
+    return;
+  }
+  const editingId = state.editingScheduleId;
+  const result = editingId
+    ? await api(`/api/schedules/${editingId}`, { method: "PATCH", body: JSON.stringify(payload) })
+    : await api("/api/schedules", { method: "POST", body: JSON.stringify(payload) });
+  closeSheet("scheduleSheet");
+  showToast(t("schedule.saved"));
+  await refreshData();
+  return result.schedule;
+}
+
+async function runSchedule(scheduleId) {
+  const { job } = await api(`/api/schedules/${scheduleId}/run`, {
+    method: "POST",
+    body: "{}",
+  });
+  if (!job) return;
+  state.currentJobId = job.id;
+  state.chatPinnedToBottom = true;
+  closeSheet("scheduleSheet");
+  enterChat();
+  renderCurrentJob(job);
+  await refreshData();
+  startLiveUpdates(job.id);
+}
+
 function openNewTaskSheet() {
   if (!hasPerm("jobs.create")) {
     showToast(t("api.forbidden"));
@@ -2499,7 +3305,7 @@ async function submitNewJob() {
     revokeImagePreviews("submit");
     renderImagePreviews("submit");
     await refreshData();
-    startPollingCurrentJob();
+    startLiveUpdates(job.id);
   } catch (error) {
     showToast(error.message);
   } finally {
@@ -2680,6 +3486,139 @@ on("#extraWorkspaceList", "click", (event) => {
   else selected.add(projectId);
   state.extraProjectIds = [...selected];
   renderExtraWorkspaces();
+});
+
+on("#scheduleExtraWorkspaceList", "click", (event) => {
+  const chip = event.target.closest("[data-extra-project]");
+  if (!chip) return;
+  const projectId = chip.dataset.extraProject;
+  const selected = new Set(state.scheduleExtraProjectIds);
+  if (selected.has(projectId)) selected.delete(projectId);
+  else selected.add(projectId);
+  state.scheduleExtraProjectIds = [...selected];
+  renderScheduleExtraWorkspaces();
+});
+
+on("#scheduleDisallowedTools", "click", (event) => {
+  const chip = event.target.closest("[data-tool]");
+  if (!chip) return;
+  chip.classList.toggle("active");
+});
+
+on("#newScheduleButton", "click", () => openScheduleSheet());
+
+on("#scheduleChangeProjectButton", "click", () => {
+  const picker = $("#scheduleProjectPicker");
+  if (!picker) return;
+  picker.classList.toggle("hidden");
+  if (!picker.classList.contains("hidden")) renderScheduleProjectPicker();
+});
+
+on("#scheduleProjectPicker", "click", (event) => {
+  const chip = event.target.closest("[data-schedule-project]");
+  if (!chip) return;
+  setScheduleProject(chip.dataset.scheduleProject);
+  $("#scheduleProjectPicker")?.classList.add("hidden");
+});
+
+on("#scheduleKindSegment", "click", (event) => {
+  const button = event.target.closest("[data-kind]");
+  if (!button) return;
+  setScheduleKind(button.dataset.kind);
+});
+
+on("#scheduleFrequencySelect", "change", () => {
+  updateScheduleFrequencyFields();
+  updateScheduleNextPreview();
+});
+
+on("#scheduleTimeInput", "change", () => updateScheduleNextPreview());
+on("#scheduleIntervalInput", "input", () => updateScheduleNextPreview());
+on("#scheduleCronInput", "input", () => updateScheduleNextPreview());
+
+on("#scheduleWeekdays", "click", (event) => {
+  const chip = event.target.closest("[data-weekday]");
+  if (!chip) return;
+  chip.classList.toggle("active");
+  updateScheduleNextPreview();
+});
+
+on("#schedulePromptChips", "click", (event) => {
+  const chip = event.target.closest("[data-prompt-template]");
+  if (!chip) return;
+  const key = chip.dataset.promptTemplate === "errors" ? "schedule.templateErrorsPrompt" : "schedule.templateDepsPrompt";
+  const input = $("#schedulePromptInput");
+  if (input) input.value = t(key);
+});
+
+on("#scheduleModeSegment", "click", (event) => {
+  const button = event.target.closest("[data-mode]");
+  if (!button) return;
+  setModeSelect($("#scheduleModeSelect"), button.dataset.mode === "plan" ? "plan" : "agent");
+  syncScheduleModeSegment();
+});
+
+on("#scheduleForm", "submit", async (event) => {
+  event.preventDefault();
+  const button = event.currentTarget.querySelector("button[type=submit]");
+  if (button) button.disabled = true;
+  try {
+    await saveSchedule();
+  } catch (error) {
+    showToast(error.message);
+  } finally {
+    if (button) button.disabled = false;
+  }
+});
+
+on("#scheduleDeleteButton", "click", async () => {
+  const id = state.editingScheduleId;
+  if (!id) return;
+  if (!window.confirm(t("schedule.deleteConfirm"))) return;
+  try {
+    await api(`/api/schedules/${id}`, { method: "DELETE" });
+    closeSheet("scheduleSheet");
+    showToast(t("schedule.deleted"));
+    await refreshData();
+  } catch (error) {
+    showToast(error.message);
+  }
+});
+
+on("#scheduleList", "click", async (event) => {
+  const toggle = event.target.closest("[data-schedule-enabled]");
+  if (toggle) {
+    event.stopPropagation();
+    try {
+      await api(`/api/schedules/${toggle.dataset.scheduleEnabled}`, {
+        method: "PATCH",
+        body: JSON.stringify({ enabled: toggle.checked }),
+      });
+      await refreshData();
+    } catch (error) {
+      toggle.checked = !toggle.checked;
+      showToast(error.message);
+    }
+    return;
+  }
+
+  const runButton = event.target.closest("[data-schedule-run]");
+  if (runButton) {
+    event.stopPropagation();
+    try {
+      await runSchedule(runButton.dataset.scheduleRun);
+    } catch (error) {
+      showToast(error.message);
+    }
+    return;
+  }
+
+  const editButton = event.target.closest("[data-schedule-edit]");
+  const item = event.target.closest("[data-schedule-id]");
+  const scheduleId = editButton?.dataset.scheduleEdit || item?.dataset.scheduleId;
+  if (!scheduleId) return;
+  const schedule = state.schedules.find((entry) => entry.id === scheduleId);
+  if (schedule && canManageSchedule(schedule)) openScheduleSheet(schedule);
 });
 
 on("#disallowedTools", "click", (event) => {
@@ -3134,6 +4073,7 @@ updateInstallButtonVisibility();
 setModeSelect($("#modeSelect"), loadSavedMode());
 bindModelSettings("submit");
 bindModelSettings("followUp");
+bindModelSettings("schedule");
 applyAgentOptions("submit", loadSavedAgentOptions());
 applyAgentOptions("followUp", loadSavedAgentOptions());
 applyModels(FALLBACK_MODELS, { id: "default" });

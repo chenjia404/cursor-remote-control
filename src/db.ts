@@ -3,7 +3,7 @@ import path from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { config } from "./config.js";
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 let database: DatabaseSync | null = null;
 
@@ -64,6 +64,22 @@ CREATE TABLE IF NOT EXISTS jobs (
 CREATE INDEX IF NOT EXISTS idx_jobs_submitted ON jobs(submitted_by);
 CREATE INDEX IF NOT EXISTS idx_jobs_updated ON jobs(updated_at);
 CREATE INDEX IF NOT EXISTS idx_jobs_parent ON jobs(parent_job_id);
+
+CREATE TABLE IF NOT EXISTS schedules (
+  id TEXT PRIMARY KEY,
+  owner_username TEXT NOT NULL,
+  enabled INTEGER NOT NULL DEFAULT 1,
+  project_id TEXT NOT NULL,
+  project_name TEXT NOT NULL,
+  project_path TEXT NOT NULL,
+  next_run_at TEXT,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL,
+  record_json TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_schedules_next ON schedules(enabled, next_run_at);
+CREATE INDEX IF NOT EXISTS idx_schedules_owner ON schedules(owner_username);
 `;
 
 export function dbFile(): string {

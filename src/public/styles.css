@@ -349,6 +349,7 @@ button.small {
   display: none;
   flex-direction: column;
   min-height: 0;
+  min-width: 0;
   overflow: hidden;
 }
 
@@ -364,7 +365,14 @@ button.small {
 
 .history-panel {
   flex-shrink: 0;
+  min-width: 0;
   padding: 0 0.75rem 0.75rem;
+  width: 100%;
+}
+
+.history-panel > * {
+  max-width: 100%;
+  min-width: 0;
 }
 
 .filter-chips {
@@ -702,7 +710,7 @@ button.small {
   border-top: 1px solid rgba(148, 163, 184, 0.15);
   bottom: 0;
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   left: 0;
   min-height: var(--bottom-nav-h);
   padding-bottom: var(--safe-bottom);
@@ -1484,12 +1492,15 @@ button.small {
 .job-list {
   display: grid;
   gap: 0.75rem;
+  min-width: 0;
 }
 
 .job-item {
   border: 1px solid #1e293b;
   border-radius: 1rem;
   cursor: pointer;
+  max-width: 100%;
+  min-width: 0;
   padding: 0.85rem;
   transition:
     border-color 0.15s ease,
@@ -1502,9 +1513,38 @@ button.small {
   background: rgba(56, 189, 248, 0.04);
 }
 
+.job-item-summary {
+  min-width: 0;
+}
+
 .job-item-summary strong {
-  display: block;
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.28rem 0.25rem;
   margin-bottom: 0.35rem;
+  min-width: 0;
+}
+
+.job-item-name {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.job-item-summary .job-item-prompt,
+.job-item-summary .meta {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.job-item .status,
+.job-item .mode-badge {
+  flex-shrink: 0;
+  margin-left: 0;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .status {
@@ -1551,6 +1591,72 @@ button.small {
 .mode-plan {
   background: rgba(167, 139, 250, 0.18);
   color: #c4b5fd;
+}
+
+.mode-scheduled {
+  background: rgba(251, 191, 36, 0.16);
+  color: #fcd34d;
+}
+
+.schedules-panel {
+  padding: 0.75rem 0 1rem;
+}
+
+.schedule-list {
+  display: grid;
+  gap: 0.65rem;
+}
+
+.schedule-item {
+  background: rgba(2, 6, 23, 0.45);
+  border: 1px solid #334155;
+  border-radius: 0.9rem;
+  display: grid;
+  gap: 0.45rem;
+  padding: 0.85rem 0.95rem;
+}
+
+.schedule-item.disabled {
+  opacity: 0.72;
+}
+
+.schedule-item-top {
+  align-items: flex-start;
+  display: flex;
+  gap: 0.6rem;
+  justify-content: space-between;
+}
+
+.schedule-item-title {
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.schedule-item-title strong {
+  color: #f8fafc;
+}
+
+.schedule-item-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  justify-content: flex-end;
+}
+
+.schedule-item-actions .ghost {
+  padding: 0.35rem 0.55rem;
+}
+
+.schedule-error {
+  color: #fca5a5;
+  font-size: 0.8rem;
+  margin: 0;
+}
+
+.schedule-form-actions {
+  display: grid;
+  gap: 0.55rem;
 }
 
 .model-settings,
@@ -1791,6 +1897,10 @@ button.small {
 
   .history-panel {
     padding-top: 0.75rem;
+  }
+
+  #appView.is-wide .bottom-nav {
+    grid-template-columns: repeat(3, 1fr);
   }
 
   #appView.is-wide .bottom-nav .nav-item[data-tab="history"] {

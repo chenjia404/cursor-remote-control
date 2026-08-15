@@ -10,7 +10,7 @@ importers:
     dependencies:
       '@cursor/sdk':
         specifier: latest
-        version: 1.0.27
+        version: 1.0.28
       '@fastify/cookie':
         specifier: latest
         version: 11.1.2
@@ -23,6 +23,9 @@ importers:
       '@fastify/static':
         specifier: latest
         version: 10.1.3
+      croner:
+        specifier: ^10.0.1
+        version: 10.0.1
       dompurify:
         specifier: ^3.4.13
         version: 3.4.13
@@ -31,7 +34,7 @@ importers:
         version: 17.4.2
       fastify:
         specifier: latest
-        version: 5.11.3
+        version: 5.12.0
       marked:
         specifier: ^18.0.9
         version: 18.0.9
@@ -75,38 +78,38 @@ packages:
     peerDependencies:
       '@bufbuild/protobuf': ^1.10.0
 
-  '@cursor/sdk-darwin-arm64@1.0.27':
-    resolution: {integrity: sha512-lO9chGVwb9lISwYtfolgF9IvTLR0Z0M8vd6AqwUfl607G/hesh+LICMD/tal2JWP0rm/hds66tIRo//M4RVupA==}
+  '@cursor/sdk-darwin-arm64@1.0.28':
+    resolution: {integrity: sha512-P9k17dHzyYirjvMIkdxGtIWFEpkC1lB0TSbNE3AEusr5UwYTHFt13+MK5j9GK8Tg3r9ncg4IeSDQgx7HvA2VAw==}
     cpu: [arm64]
     os: [darwin]
     hasBin: true
 
-  '@cursor/sdk-darwin-x64@1.0.27':
-    resolution: {integrity: sha512-moYR40uq0Mu2Runm7XWa60+8n9Epyah++fkaW/avAYMAel/qOeHTH/uiNKTjwuCledQmczCYWDTVlZQOGEhrxg==}
+  '@cursor/sdk-darwin-x64@1.0.28':
+    resolution: {integrity: sha512-SFamp6b3a5/Og4RIYpxivA9TNqSam8+yeDwdu4+iV9GwZygtw2y1r8Qz2r7VpDj40gou2UP/p8Nu54nAdAl4Mg==}
     cpu: [x64]
     os: [darwin]
     hasBin: true
 
-  '@cursor/sdk-linux-arm64@1.0.27':
-    resolution: {integrity: sha512-caDqO0RPYmaCbQYpJwTMT5YeVqP6WkZq1y7n5v1N3rlkjdaM2mWbkdSFEUL4GOTdkm8oIEx2diRNQ1hrJbVPYQ==}
+  '@cursor/sdk-linux-arm64@1.0.28':
+    resolution: {integrity: sha512-J0Pp2vZLApRm4+j35zNFaMkAuI7AoTzY7bt1UdRC/NSAcJsh74soCf/HqB59Ps94HaznF7PYl1ft6ltnn4to4g==}
     cpu: [arm64]
     os: [linux]
     hasBin: true
 
-  '@cursor/sdk-linux-x64@1.0.27':
-    resolution: {integrity: sha512-z3aVQaXk4T9QjB11u77JihHrSN0XeFYCrnuqvd9PMZQSqiXfUheqX/lQTRxFjfccoU4tK1p/nJ91IWKAUVQU4g==}
+  '@cursor/sdk-linux-x64@1.0.28':
+    resolution: {integrity: sha512-YFBA2syvFJZE15d1MBtgqJJCuYGbZEU7GcE8EaGDU3A6iJguZg7PB97c3ux2qN5kJtdk0+EveevrIi2UJsr5Ag==}
     cpu: [x64]
     os: [linux]
     hasBin: true
 
-  '@cursor/sdk-win32-x64@1.0.27':
-    resolution: {integrity: sha512-LbkimreWuz+FsyUcRKlvgwnWbXwzzcFexCUGkHCWNuO0JSspjhqUGfDtFFxhHU5ohMMy2FpzU7qs5wKzAc8NgA==}
+  '@cursor/sdk-win32-x64@1.0.28':
+    resolution: {integrity: sha512-+9G30RcR+cDkQxiyFBfrNWSBkZJc19G9L7+bTl9PdiBI7FPCu1vCCdP4BBvntdCkFS9LwEX3iJyWJqEreFjNQg==}
     cpu: [x64]
     os: [win32]
     hasBin: true
 
-  '@cursor/sdk@1.0.27':
-    resolution: {integrity: sha512-QR2RYZagCUlil/A4JcRU8rI4JmYICuMdWkuIsiz/yHvd/N3bisjw9o2uXhkKitDKHgIyeGDHwrQfH/MYttM37g==}
+  '@cursor/sdk@1.0.28':
+    resolution: {integrity: sha512-bO7Ld00xXV5kFB9WDeBiyADgon3r/BQXc9qZ4sHlXX9ZQpzIkTfHrYU7g278pcHTuz+l/vPcPcc7JByeRWHeqA==}
     engines: {node: '>=22.13'}
 
   '@emnapi/runtime@1.11.3':
@@ -650,6 +653,10 @@ packages:
     resolution: {integrity: sha512-yuToqVvRrj6pfDXREyQAAv8SkAEk/8GS3jQRTiUMm66TVtBYmqQeoEjL2Lmq8Rpo6271vH76InTChTitEAm65w==}
     engines: {node: '>=22'}
 
+  croner@10.0.1:
+    resolution: {integrity: sha512-ixNtAJndqh173VQ4KodSdJEI6nuioBWI0V1ITNKhZZsO0pEMoDxz539T4FTTbSZ/xIOSuDnzxLVRqBVSvPNE2g==}
+    engines: {node: '>=18.0'}
+
   depd@2.0.0:
     resolution: {integrity: sha512-g7nH6P6dyDioJogAAGprGpCtVImJhpPk/roCzdb3fIh61/s/nPsfR6onyMwkCAR/OlC3yBC0lESvUoQEAssIrw==}
     engines: {node: '>= 0.8'}
@@ -698,8 +705,8 @@ packages:
   fastify-plugin@6.0.0:
     resolution: {integrity: sha512-fZOty7z3O7vOliF6d8bHE3wiEh1KcNnKEQensSgTk9C1DvN6nRLS++XVd86v33Hw/8u9Un8A1zDrQ8ujcQDHEg==}
 
-  fastify@5.11.3:
-    resolution: {integrity: sha512-W6hzDP8s0iSeL7LGwY6Oc/ZxuXWOvFEMs6p2L0Si415YRo27W5pBKdOTXxhemBDeSTAcpYf5evRA9onF2OYhPA==}
+  fastify@5.12.0:
+    resolution: {integrity: sha512-A3RNEaDIHWaxFW8n8rNJaW1wQ+XAXuoU71llfUQJjuh5WaYLmKfRhhanaJBOx8m2EBPQkR6sDBovYdHNe9F6rA==}
 
   fastq@1.20.1:
     resolution: {integrity: sha512-GGToxJ/w1x32s/D2EKND7kTil4n8OVk/9mycTc4VDza13lOvpUZTGX3mFSCtV9ksdGBVzvsyAVLM6mHFThxXxw==}
@@ -915,22 +922,22 @@ snapshots:
     dependencies:
       '@bufbuild/protobuf': 1.10.0
 
-  '@cursor/sdk-darwin-arm64@1.0.27':
+  '@cursor/sdk-darwin-arm64@1.0.28':
     optional: true
 
-  '@cursor/sdk-darwin-x64@1.0.27':
+  '@cursor/sdk-darwin-x64@1.0.28':
     optional: true
 
-  '@cursor/sdk-linux-arm64@1.0.27':
+  '@cursor/sdk-linux-arm64@1.0.28':
     optional: true
 
-  '@cursor/sdk-linux-x64@1.0.27':
+  '@cursor/sdk-linux-x64@1.0.28':
     optional: true
 
-  '@cursor/sdk-win32-x64@1.0.27':
+  '@cursor/sdk-win32-x64@1.0.28':
     optional: true
 
-  '@cursor/sdk@1.0.27':
+  '@cursor/sdk@1.0.28':
     dependencies:
       '@bufbuild/protobuf': 1.10.0
       '@connectrpc/connect': 1.7.0(@bufbuild/protobuf@1.10.0)
@@ -939,11 +946,11 @@ snapshots:
       '@statsig/js-client': 3.31.0
       zod: 3.25.76
     optionalDependencies:
-      '@cursor/sdk-darwin-arm64': 1.0.27
-      '@cursor/sdk-darwin-x64': 1.0.27
-      '@cursor/sdk-linux-arm64': 1.0.27
-      '@cursor/sdk-linux-x64': 1.0.27
-      '@cursor/sdk-win32-x64': 1.0.27
+      '@cursor/sdk-darwin-arm64': 1.0.28
+      '@cursor/sdk-darwin-x64': 1.0.28
+      '@cursor/sdk-linux-arm64': 1.0.28
+      '@cursor/sdk-linux-x64': 1.0.28
+      '@cursor/sdk-win32-x64': 1.0.28
 
   '@emnapi/runtime@1.11.3':
     dependencies:
@@ -1305,6 +1312,8 @@ snapshots:
 
   cookie@2.0.1: {}
 
+  croner@10.0.1: {}
+
   depd@2.0.0: {}
 
   dequal@2.0.3: {}
@@ -1371,7 +1380,7 @@ snapshots:
 
   fastify-plugin@6.0.0: {}
 
-  fastify@5.11.3:
+  fastify@5.12.0:
     dependencies:
       '@fastify/ajv-compiler': 4.0.6
       '@fastify/error': 4.2.0

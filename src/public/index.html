@@ -12,13 +12,13 @@
     <link rel="icon" href="/icons/icon-192.png" type="image/png" sizes="192x192" />
     <link rel="icon" href="/icons/icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" sizes="180x180" />
-    <link rel="stylesheet" href="/styles.css?v=0.3.0" />
+    <link rel="stylesheet" href="/styles.css?v=0.4.0" />
   </head>
   <body>
     <main class="shell">
       <section id="loginView" class="card login-card">
         <div class="login-brand">
-          <p class="eyebrow">Cursor Remote Control <span id="loginAppVersion" class="version">v0.3.0</span></p>
+          <p class="eyebrow">Cursor Remote Control <span id="loginAppVersion" class="version">v0.4.0</span></p>
           <h1 data-i18n="header.title">远程控制台</h1>
         </div>
         <h2 data-i18n="login.title">登录</h2>
@@ -166,6 +166,21 @@
                 </div>
               </div>
             </section>
+
+            <section id="tabSchedules" class="tab-panel" data-tab="schedules" hidden>
+              <div class="pull-refresh-zone" id="schedulesPullZone">
+                <div class="pull-refresh-indicator" id="schedulesPullIndicator" aria-hidden="true">
+                  <span class="pull-refresh-text" data-i18n="pull.pull">下拉刷新</span>
+                </div>
+                <div class="schedules-panel stack">
+                  <button id="newScheduleButton" type="button" data-i18n="schedule.new">新建规则</button>
+                  <p class="hint" data-i18n="schedule.hint">
+                    到点后会按规则把指令交给 Cursor Agent，不会提供任意 Shell。
+                  </p>
+                  <div id="scheduleList" class="schedule-list"></div>
+                </div>
+              </div>
+            </section>
           </div>
         </div>
 
@@ -254,6 +269,10 @@
             <span class="nav-icon" aria-hidden="true">📁</span>
             <span data-i18n="nav.projects">项目</span>
           </button>
+          <button type="button" class="nav-item" data-tab="schedules" role="tab" aria-selected="false">
+            <span class="nav-icon" aria-hidden="true">⏰</span>
+            <span data-i18n="nav.schedules">定时</span>
+          </button>
         </nav>
       </div>
 
@@ -336,6 +355,127 @@
         </div>
       </div>
 
+      <div id="scheduleSheet" class="sheet hidden" aria-hidden="true">
+        <div class="sheet-backdrop" data-sheet-close="scheduleSheet"></div>
+        <div class="sheet-panel" role="dialog" aria-modal="true" data-i18n-aria="schedule.edit">
+          <div class="sheet-header">
+            <h2 id="scheduleSheetTitle" data-i18n="schedule.new">新建规则</h2>
+            <button type="button" class="ghost icon-btn sheet-close" data-sheet-close="scheduleSheet" aria-label="关闭">✕</button>
+          </div>
+          <form id="scheduleForm" class="sheet-body stack">
+            <input type="hidden" name="scheduleId" value="" />
+            <label>
+              <span data-i18n="schedule.name">名称</span>
+              <input name="name" maxlength="80" required data-i18n-placeholder="schedule.namePlaceholder" placeholder="例如：每周更新依赖" />
+            </label>
+            <div class="sheet-project-row">
+              <div>
+                <span class="sheet-label" data-i18n="submit.project">项目</span>
+                <p id="scheduleProjectName" class="sheet-project-name" data-i18n="project.noneSelected">暂无已选项目</p>
+              </div>
+              <button id="scheduleChangeProjectButton" type="button" class="ghost small" data-i18n="task.changeProject">
+                更换
+              </button>
+            </div>
+            <div id="scheduleProjectPicker" class="chip-list hidden"></div>
+            <div class="mode-segment" id="scheduleKindSegment" role="group" data-i18n-aria="schedule.kind">
+              <button type="button" class="mode-segment-btn active" data-kind="simple" data-i18n="schedule.kindSimple">简单周期</button>
+              <button type="button" class="mode-segment-btn" data-kind="cron" data-i18n="schedule.kindCron">Cron</button>
+            </div>
+            <div id="scheduleSimpleFields" class="stack">
+              <label>
+                <span data-i18n="schedule.frequency">周期</span>
+                <select id="scheduleFrequencySelect" name="frequency">
+                  <option value="daily" data-i18n="schedule.daily">每天</option>
+                  <option value="weekly" data-i18n="schedule.weekly">每周</option>
+                  <option value="interval" data-i18n="schedule.interval">每 N 小时</option>
+                </select>
+              </label>
+              <label id="scheduleTimeField">
+                <span data-i18n="schedule.time">时刻</span>
+                <input id="scheduleTimeInput" name="time" type="time" value="03:00" />
+              </label>
+              <div id="scheduleWeekdaysField" class="hidden">
+                <span class="sheet-label" data-i18n="schedule.weekdays">星期</span>
+                <div id="scheduleWeekdays" class="chip-list"></div>
+              </div>
+              <label id="scheduleIntervalField" class="hidden">
+                <span data-i18n="schedule.intervalHours">间隔小时</span>
+                <input id="scheduleIntervalInput" name="intervalHours" type="number" min="1" max="168" value="6" />
+              </label>
+            </div>
+            <label id="scheduleCronField" class="hidden">
+              <span data-i18n="schedule.cron">Cron 表达式</span>
+              <input id="scheduleCronInput" name="cronExpr" maxlength="80" data-i18n-placeholder="schedule.cronPlaceholder" placeholder="0 3 * * 1" />
+              <p class="hint" data-i18n="schedule.cronHint">5 段：分 时 日 月 周，例如 0 3 * * 1 表示每周一 03:00。</p>
+            </label>
+            <p id="scheduleNextPreview" class="hint"></p>
+            <label>
+              <span data-i18n="submit.prompt">指令</span>
+              <textarea
+                id="schedulePromptInput"
+                name="prompt"
+                rows="5"
+                required
+                data-i18n-placeholder="schedule.promptPlaceholder"
+                placeholder="例如：检查并更新依赖，跑完现有测试后用中文说明结果。"
+              ></textarea>
+            </label>
+            <div id="schedulePromptChips" class="chip-list"></div>
+            <label class="inline-toggle">
+              <input id="scheduleResumeToggle" type="checkbox" />
+              <span data-i18n="schedule.resumeLast">继续上次会话</span>
+            </label>
+            <div class="mode-segment" id="scheduleModeSegment" role="group" data-i18n-aria="submit.mode">
+              <button type="button" class="mode-segment-btn active" data-mode="agent" data-i18n="submit.modeAgent">Agent</button>
+              <button type="button" class="mode-segment-btn" data-mode="plan" data-i18n="submit.modePlan">Plan</button>
+            </div>
+            <select id="scheduleModeSelect" class="hidden" aria-hidden="true">
+              <option value="agent">agent</option>
+              <option value="plan">plan</option>
+            </select>
+            <div class="model-settings">
+              <label>
+                <span data-i18n="submit.model">模型</span>
+                <select id="scheduleModelSelect"></select>
+              </label>
+              <details class="model-advanced" id="scheduleModelAdvanced">
+                <summary data-i18n="submit.modelAdvanced">高级模型选项</summary>
+                <div id="scheduleModelParams" class="model-params"></div>
+              </details>
+            </div>
+            <details class="model-advanced" id="scheduleAgentAdvanced">
+              <summary data-i18n="submit.agentAdvanced">Agent 选项</summary>
+              <div id="scheduleExtraWorkspaceList" class="chip-list"></div>
+              <label class="inline-toggle">
+                <input id="scheduleLoadLocalSettingsToggle" type="checkbox" checked />
+                <span data-i18n="submit.loadLocalSettings">加载本机规则 / Skills / MCP</span>
+              </label>
+              <label class="inline-toggle">
+                <input id="scheduleSandboxToggle" type="checkbox" />
+                <span data-i18n="submit.sandbox">启用沙箱</span>
+              </label>
+              <label class="inline-toggle">
+                <input id="scheduleAutoReviewToggle" type="checkbox" />
+                <span data-i18n="submit.autoReview">启用 Auto-review</span>
+              </label>
+              <div>
+                <span class="sheet-label" data-i18n="submit.disallowedTools">禁用工具</span>
+                <div id="scheduleDisallowedTools" class="chip-list"></div>
+              </div>
+            </details>
+            <label class="inline-toggle">
+              <input id="scheduleEnabledToggle" type="checkbox" checked />
+              <span data-i18n="schedule.enabled">启用此规则</span>
+            </label>
+            <div class="schedule-form-actions">
+              <button type="submit" data-i18n="schedule.save">保存规则</button>
+              <button id="scheduleDeleteButton" type="button" class="ghost danger hidden" data-i18n="schedule.delete">删除</button>
+            </div>
+          </form>
+        </div>
+      </div>
+
       <div id="settingsSheet" class="sheet hidden" aria-hidden="true">
         <div class="sheet-backdrop" data-sheet-close="settingsSheet"></div>
         <div class="sheet-panel" role="dialog" aria-modal="true" data-i18n-aria="settings.title">
@@ -377,7 +517,7 @@
             <button id="logoutButton" class="ghost danger" type="button" data-i18n="header.logout">退出登录</button>
             <p class="hint settings-version">
               <span data-i18n="settings.version">版本</span>
-              <span id="appVersion" class="version">v0.3.0</span>
+              <span id="appVersion" class="version">v0.4.0</span>
             </p>
           </div>
         </div>
@@ -455,6 +595,6 @@
 
       <div id="toast" class="toast hidden"></div>
     </main>
-    <script src="/boot.js?v=0.3.0"></script>
+    <script src="/boot.js?v=0.4.0"></script>
   </body>
 </html>

@@ -54,6 +54,8 @@ pnpm generate-icons
 - `src/config.ts`：环境变量读取和配置校验。
 - `src/projects.ts`：已选项目持久化、目录浏览、路径安全校验与项目标记检测。
 - `src/jobs.ts`：任务历史、多轮对话、任务状态、日志持久化。
+- `src/schedules.ts`：按项目的定时规则、下次触发时间计算。
+- `src/scheduler.ts`：进程内定时 tick，到期后复用建任务 / 追加轮次流程。
 - `src/cursorAgent.ts`：Cursor SDK 本地 Agent 执行封装。
 - `src/agentOptions.ts`：本地规则/MCP、沙箱、工具限制、附加工作区等 Agent 选项。
 - `src/jobImages.ts`：任务附图校验与落盘。
@@ -78,6 +80,7 @@ pnpm generate-icons
 - 公网访问时必须使用 HTTPS 反代；本服务仍只监听 HTTP。把 `COOKIE_SECURE=true`，并设置 `PUBLIC_BASE_URL=https://...`；反代需转发 `X-Forwarded-Proto`。
 - 新增接口如果会改变状态，必须经过登录和 CSRF 校验。
 - 任务日志、错误输出和审计信息中不要输出敏感环境变量。
+- 定时规则只能复用现有建任务 / 追加轮次流程，到期后仍须经过项目路径校验与权限检查，不能变成任意 Shell。
 
 ## 开发约定
 

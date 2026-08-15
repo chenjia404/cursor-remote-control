@@ -27,3 +27,13 @@ export function userCanOperateJob(
   if (submittedBy === user.username) return true;
   return hasPermission(user.permissions, "jobs.operateOthers");
 }
+
+export function userCanViewSchedule(user: AccessUser | undefined, ownerUsername: string): boolean {
+  return userCanViewJob(user, ownerUsername);
+}
+
+export function userCanManageSchedule(user: AccessUser | undefined, ownerUsername: string): boolean {
+  if (!user || !hasPermission(user.permissions, "jobs.create")) return false;
+  if (ownerUsername === user.username) return true;
+  return hasPermission(user.permissions, "jobs.operateOthers");
+}

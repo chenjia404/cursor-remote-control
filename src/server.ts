@@ -11,7 +11,7 @@ import {
   resolveRunOptions,
   sanitizeToolNames,
 } from "./agentOptions.js";
-import { userCanOperateJob, userCanUseProject, userCanViewJob } from "./access.js";
+import { userCanManageSchedule, userCanOperateJob, userCanUseProject, userCanViewJob } from "./access.js";
 import {
   clearSession,
   deleteUserSessions,
@@ -26,7 +26,7 @@ import {
 } from "./auth.js";
 import { assertRequiredConfig, config } from "./config.js";
 import { initDatabase } from "./db.js";
-import { hasPermission, isRole, publicPermissionCatalog, sanitizePermissions } from "./permissions.js";
+import { hasPermission, isRole, publicPermissionCatalog, resolvePermissions, sanitizePermissions } from "./permissions.js";
 import {
   assertPasswordStrength,
   generatePasswordHash,
@@ -50,7 +50,25 @@ import {
   resumeQueuedConversations,
   scheduleConversation,
 } from "./cursorAgent.js";
-import { createJob, enqueueJobTurn, flushJobs, getJob, listJobs, loadJobs, recoverInterruptedJobs, updateTurn } from "./jobs.js";
+import { ScheduleTriggerError, startScheduler, stopScheduler, triggerSchedule } from "./scheduler.js";
+import {
+  createSchedule,
+  deleteSchedule,
+  getSchedule,
+  listSchedules,
+  updateSchedule,
+} from "./schedules.js";
+import {
+  createJob,
+  enqueueJobTurn,
+  flushJobs,
+  getJob,
+  listJobs,
+  loadJobs,
+  recoverInterruptedJobs,
+  subscribeJobUpdates,
+  updateTurn,
+} from "./jobs.js";
 import { readJobImage, saveJobImages } from "./jobImages.js";
 import { defaultModelSelection, listCursorModels, normalizeModelSelection, warmupModelCatalog } from "./models.js";
 import {
@@ -119,6 +137,33 @@ const followUpSchema = z.object({
   images: agentRunOptionsSchema.images,
 });
 
+const simpleScheduleSchema = z.object({
+  frequency: z.enum(["daily", "weekly", "interval"]),
+  time: z.string().max(8).optional(),
+  weekdays: z.array(z.number().int().min(0).max(6)).max(7).optional(),
+  intervalHours: z.number().int().min(1).max(168).optional(),
+});
+
+const createScheduleSchema = z.object({
+  name: z.string().min(1).max(80),
+  projectId: z.string().min(1),
+  enabled: z.boolean().optional(),
+  kind: z.enum(["simple", "cron"]),
+  simple: simpleScheduleSchema.optional(),
+  cronExpr: z.string().max(80).optional(),
+  prompt: z.string().min(1).max(20000),
+  resumeLast: z.boolean().optional(),
+  mode: z.enum(["agent", "plan"]).optional(),
+  model: modelSelectionSchema.optional(),
+  extraProjectIds: z.array(z.string().min(1)).max(8).optional(),
+  loadLocalSettings: z.boolean().optional(),
+  sandbox: z.boolean().optional(),
+  autoReview: z.boolean().optional(),
+  disallowedTools: z.array(z.string().min(1).max(64)).max(32).optional(),
+});
+
+const patchScheduleSchema = createScheduleSchema.partial();
+
 const browseSchema = z.object({
   path: z.string().optional(),
 });
@@ -179,6 +224,16 @@ function sendForbidden(reply: { code: (status: number) => { send: (payload: { er
   reply.code(403).send({ error: message });
 }
 
+async function resolveWritableProject(user: AuthenticatedUser | undefined, projectId: string) {
+  if (!(await isProjectSelected(projectId))) {
+    throw new Error("请先在「浏览目录」中确认该项目");
+  }
+  if (!userCanUseProject(user, projectId)) {
+    throw new Error("没有该项目的使用权限");
+  }
+  return getProjectById(projectId);
+}
+
 async function start(): Promise<void> {
   assertRequiredConfig();
   initDatabase();
@@ -199,6 +254,8 @@ async function start(): Promise<void> {
     logger: true,
     trustProxy: true,
     bodyLimit: 32 * 1024 * 1024,
+    requestTimeout: 0,
+    connectionTimeout: 0,
   });
 
   await app.register(cookie);
@@ -353,6 +410,72 @@ async function start(): Promise<void> {
     }
 
     return { job };
+  });
+
+  app.get("/api/jobs/:id/events", {
+    preHandler: requireAuth,
+    config: { rateLimit: { max: 30, timeWindow: "1 minute" } },
+  }, async (request, reply) => {
+    const params = z.object({ id: z.string().uuid() }).parse(request.params);
+    const job = getJob(params.id);
+    if (!job) {
+      reply.code(404).send({ error: "任务不存在" });
+      return;
+    }
+    if (!userCanViewJob(request.user, job.submittedBy)) {
+      sendForbidden(reply);
+      return;
+    }
+
+    reply.hijack();
+    request.raw.setTimeout(0);
+    request.socket.setTimeout(0);
+    reply.raw.writeHead(200, {
+      "Content-Type": "text/event-stream; charset=utf-8",
+      "Cache-Control": "no-cache, no-transform",
+      Connection: "keep-alive",
+      "X-Accel-Buffering": "no",
+    });
+
+    let cleaned = false;
+    let unsubscribe = (): void => {};
+    let heartbeat: ReturnType<typeof setInterval> | undefined;
+    const cleanup = () => {
+      if (cleaned) return;
+      cleaned = true;
+      if (heartbeat) clearInterval(heartbeat);
+      unsubscribe();
+      if (!reply.raw.writableEnded) {
+        reply.raw.end();
+      }
+    };
+
+    const writeEvent = (event: string, payload: unknown) => {
+      if (cleaned) return;
+      try {
+        reply.raw.write(`event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`);
+      } catch {
+        cleanup();
+      }
+    };
+
+    heartbeat = setInterval(() => {
+      if (cleaned) return;
+      try {
+        reply.raw.write(": ping\n\n");
+      } catch {
+        cleanup();
+      }
+    }, 20000);
+
+    unsubscribe = subscribeJobUpdates(job.id, (event) => {
+      writeEvent(event.type, event);
+    });
+
+    request.raw.on("close", cleanup);
+    request.raw.on("error", cleanup);
+    reply.raw.on("error", cleanup);
+    reply.raw.on("close", cleanup);
   });
 
   app.post("/api/jobs", { preHandler: requireCsrf }, async (request, reply) => {
@@ -593,6 +716,207 @@ async function start(): Promise<void> {
     }
   });
 
+  app.get("/api/schedules", { preHandler: requireAuth }, async (request) => ({
+    schedules: listSchedules(
+      hasPermission(request.user?.permissions, "jobs.viewAll") ? undefined : { ownerUsername: request.user?.username },
+    ),
+  }));
+
+  app.post("/api/schedules", { preHandler: requireCsrf }, async (request, reply) => {
+    if (!hasPermission(request.user?.permissions, "jobs.create")) {
+      sendForbidden(reply);
+      return;
+    }
+
+    const catalog = await listCursorModels();
+    const body = createScheduleSchema.parse(request.body);
+    try {
+      const project = await resolveWritableProject(request.user, body.projectId);
+      const extraProjects = await resolveExtraProjects(body.extraProjectIds, project.id);
+      if (extraProjects.some((item) => !userCanUseProject(request.user, item.id))) {
+        sendForbidden(reply, "没有该项目的使用权限");
+        return;
+      }
+
+      const runOptions = resolveRunOptions({
+        loadLocalSettings: body.loadLocalSettings,
+        sandbox: body.sandbox,
+        autoReview: body.autoReview,
+        disallowedTools: sanitizeToolNames(body.disallowedTools),
+        extraProjects,
+      });
+
+      const schedule = createSchedule({
+        name: body.name,
+        ownerUsername: request.user?.username ?? config.adminUsername,
+        project,
+        enabled: body.enabled,
+        kind: body.kind,
+        simple: body.simple,
+        cronExpr: body.cronExpr,
+        prompt: body.prompt,
+        resumeLast: body.resumeLast,
+        runOptions: {
+          mode: body.mode ?? config.cursorDefaultMode,
+          model: normalizeModelSelection(body.model, catalog),
+          extraProjects: runOptions.extraProjects,
+          loadLocalSettings: runOptions.loadLocalSettings,
+          sandbox: runOptions.sandbox,
+          autoReview: runOptions.autoReview,
+          disallowedTools: runOptions.disallowedTools,
+        },
+      });
+      reply.code(201).send({ schedule });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const code = message === "没有该项目的使用权限" ? 403 : 400;
+      reply.code(code).send({ error: message });
+    }
+  });
+
+  app.patch("/api/schedules/:id", { preHandler: requireCsrf }, async (request, reply) => {
+    const params = z.object({ id: z.string().uuid() }).parse(request.params);
+    const existing = getSchedule(params.id);
+    if (!existing) {
+      reply.code(404).send({ error: "定时规则不存在" });
+      return;
+    }
+    if (!userCanManageSchedule(request.user, existing.ownerUsername)) {
+      sendForbidden(reply);
+      return;
+    }
+
+    const catalog = await listCursorModels();
+    const body = patchScheduleSchema.parse(request.body);
+    const definedKeys = Object.entries(body)
+      .filter(([, value]) => value !== undefined)
+      .map(([key]) => key);
+    if (definedKeys.length === 1 && definedKeys[0] === "enabled") {
+      try {
+        return { schedule: updateSchedule(existing.id, { enabled: body.enabled }) };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        reply.code(message === "定时规则不存在" ? 404 : 400).send({ error: message });
+        return;
+      }
+    }
+
+    try {
+      const projectId = body.projectId ?? existing.project.id;
+      const project = body.projectId ? await resolveWritableProject(request.user, body.projectId) : existing.project;
+      const extraIds = body.extraProjectIds ?? existing.runOptions.extraProjects?.map((item) => item.id);
+      const extraProjects = await resolveExtraProjects(extraIds, projectId);
+      if (extraProjects.some((item) => !userCanUseProject(request.user, item.id))) {
+        sendForbidden(reply, "没有该项目的使用权限");
+        return;
+      }
+
+      const owner = getUserByUsername(existing.ownerUsername);
+      if (owner && !owner.disabled) {
+        const ownerAccess = {
+          username: owner.username,
+          permissions: resolvePermissions(owner.role, owner.grants, owner.denies),
+          allowedProjectIds: owner.allowedProjectIds,
+        };
+        if (!userCanUseProject(ownerAccess, projectId)) {
+          sendForbidden(reply, "属主没有该项目的使用权限");
+          return;
+        }
+        if (extraProjects.some((item) => !userCanUseProject(ownerAccess, item.id))) {
+          sendForbidden(reply, "属主没有附加工作区的使用权限");
+          return;
+        }
+      }
+
+      const runTouched =
+        body.projectId !== undefined ||
+        body.mode !== undefined ||
+        body.model !== undefined ||
+        body.extraProjectIds !== undefined ||
+        body.loadLocalSettings !== undefined ||
+        body.sandbox !== undefined ||
+        body.autoReview !== undefined ||
+        body.disallowedTools !== undefined;
+
+      const runOptions = runTouched
+        ? {
+            ...resolveRunOptions({
+              loadLocalSettings: body.loadLocalSettings ?? existing.runOptions.loadLocalSettings,
+              sandbox: body.sandbox ?? existing.runOptions.sandbox,
+              autoReview: body.autoReview ?? existing.runOptions.autoReview,
+              disallowedTools: body.disallowedTools
+                ? sanitizeToolNames(body.disallowedTools)
+                : existing.runOptions.disallowedTools,
+              extraProjects,
+            }),
+            mode: body.mode ?? existing.runOptions.mode,
+            model:
+              body.model !== undefined
+                ? normalizeModelSelection(body.model, catalog)
+                : existing.runOptions.model,
+          }
+        : existing.runOptions;
+
+      const schedule = updateSchedule(existing.id, {
+        name: body.name,
+        project: body.projectId ? project : undefined,
+        enabled: body.enabled,
+        kind: body.kind,
+        simple: body.simple,
+        cronExpr: body.cronExpr,
+        prompt: body.prompt,
+        resumeLast: body.resumeLast,
+        runOptions: runTouched ? runOptions : undefined,
+      });
+      return { schedule };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const code = message === "定时规则不存在" ? 404 : message === "没有该项目的使用权限" ? 403 : 400;
+      reply.code(code).send({ error: message });
+    }
+  });
+
+  app.delete("/api/schedules/:id", { preHandler: requireCsrf }, async (request, reply) => {
+    const params = z.object({ id: z.string().uuid() }).parse(request.params);
+    const existing = getSchedule(params.id);
+    if (!existing) {
+      reply.code(404).send({ error: "定时规则不存在" });
+      return;
+    }
+    if (!userCanManageSchedule(request.user, existing.ownerUsername)) {
+      sendForbidden(reply);
+      return;
+    }
+    deleteSchedule(existing.id);
+    return { ok: true };
+  });
+
+  app.post("/api/schedules/:id/run", { preHandler: requireCsrf }, async (request, reply) => {
+    const params = z.object({ id: z.string().uuid() }).parse(request.params);
+    const existing = getSchedule(params.id);
+    if (!existing) {
+      reply.code(404).send({ error: "定时规则不存在" });
+      return;
+    }
+    if (!userCanManageSchedule(request.user, existing.ownerUsername)) {
+      sendForbidden(reply);
+      return;
+    }
+
+    try {
+      const result = await triggerSchedule(existing.id, { manual: true });
+      if (!result) {
+        reply.code(400).send({ error: "触发失败" });
+        return;
+      }
+      reply.code(202).send(result);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const status = error instanceof ScheduleTriggerError ? error.statusCode : 400;
+      reply.code(status).send({ error: message });
+    }
+  });
+
   app.get("/api/users", { preHandler: [requireAuth, requirePermission("users.manage")] }, async () => ({
     users: listUsers(),
   }));
@@ -703,10 +1027,12 @@ async function start(): Promise<void> {
   });
 
   app.addHook("onClose", async () => {
+    stopScheduler();
     await flushJobs();
   });
 
   await app.listen({ host: config.host, port: config.port });
+  startScheduler();
   app.log.info(
     {
       listen: `http://${config.host}:${config.port}`,

@@ -20,6 +20,7 @@ The UI supports Chinese and English. Use the language switcher in the top-right 
 - Loads local project rules, Skills, and MCP by default. You can attach extra confirmed workspaces, restrict tools, enable sandbox / Auto-review, and send images.
 - The session view shows tool calls, token usage, thinking, and replies.
 - Persists job history, status, Agent ID, Run ID, and logs. One job is one conversation; follow-up messages stay on the same job. While a round is running, follow-ups queue by default; Append interrupts the current round and runs immediately.
+- Scheduled rules on confirmed projects: simple cadence (daily / weekly / every N hours) or cron. When due, the saved prompt is sent to the Cursor Agent. Each run starts a new job by default, or continues the last session. A still-running previous job skips that occurrence; downtime is caught up at most once.
 - PWA support so you can install it to the home screen from a mobile browser.
 - Chinese / English UI language switcher.
 - No arbitrary shell input; the web UI cannot run system commands directly.
@@ -120,3 +121,4 @@ If you still try compose, note that it overrides `PROJECT_ROOTS` with container 
 - Do not set `PROJECT_ROOTS` to an entire system drive; prefer roots like `E:\code;D:\code;C:\code`.
 - Share the console by permission. Do not share one admin password. Two agents on the same project can overwrite each other’s files.
 - There is no self-registration; only users with “Manage users” can create accounts.
+- Scheduled rules still go through the same project checks as a logged-in user; they only send a prompt to the Cursor Agent and never become arbitrary system commands.

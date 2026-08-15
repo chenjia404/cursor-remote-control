@@ -87,6 +87,8 @@ export type JobRecord = {
   usage?: JobTokenUsage;
   activeTurnId?: string;
   logs: JobLog[];
+  /** 由定时规则触发时记录来源，便于历史列表标记 */
+  scheduleId?: string;
 };
 
 export type JobTurnSummary = Pick<JobTurn, "id" | "status" | "createdAt" | "startedAt" | "finishedAt" | "mode">;
@@ -110,7 +112,33 @@ export type JobSummary = {
   activeTurnId?: string;
   submittedBy: string;
   turns: JobTurnSummary[];
+  scheduleId?: string;
 };
+
+/** 会话实时推送：首包全量，之后只推状态和变化的日志尾部 */
+export type JobLivePatch = {
+  updatedAt: string;
+  status: JobStatus;
+  startedAt?: string;
+  finishedAt?: string;
+  error?: string;
+  result?: string;
+  usage?: JobTokenUsage;
+  activeTurnId?: string;
+  runId?: string;
+  agentId?: string;
+  mode?: AgentMode;
+  model?: AgentModelSelection;
+  turns?: JobTurn[];
+  logStart: number;
+  logs: JobLog[];
+};
+
+export type JobLiveEvent =
+  | { type: "snapshot"; job: JobRecord }
+  | { type: "update"; patch: JobLivePatch };
+
+type JobLiveListener = (event: JobLiveEvent) => void;
 
 const jobs = new Map<string, JobRecord>();
 const dirtyJobIds = new Set<string>();
@@ -123,6 +151,11 @@ const MAX_LOG_ENTRIES = 2000;
 const MAX_LOG_MESSAGE_LENGTH = 20000;
 const PERSIST_DEBOUNCE_MS = 400;
 const PERSIST_MAX_DELAY_MS = 1500;
+const LIVE_NOTIFY_DEBOUNCE_MS = 40;
+
+const jobLiveListeners = new Map<string, Set<JobLiveListener>>();
+const liveNotifyTimers = new Map<string, ReturnType<typeof setTimeout>>();
+const liveNotifyCursor = new Map<string, { count: number; head: string; turnsKey: string }>();
 
 function jobsFile(): string {
   return path.join(config.dataDir, "jobs.json");
@@ -266,6 +299,122 @@ function clearPersistTimer(): void {
   persistTimer = null;
 }
 
+function jobLogHead(job: JobRecord): string {
+  const first = job.logs[0];
+  return first ? `${first.time}|${first.level}|${first.message.length}` : "";
+}
+
+function jobTurnsKey(job: JobRecord): string {
+  return job.turns.map((turn) => `${turn.id}:${turn.status}:${turn.finishedAt ?? ""}`).join(",");
+}
+
+function rememberLiveCursor(job: JobRecord): void {
+  liveNotifyCursor.set(job.id, {
+    count: job.logs.length,
+    head: jobLogHead(job),
+    turnsKey: jobTurnsKey(job),
+  });
+}
+
+function buildJobLivePatch(job: JobRecord): JobLivePatch {
+  const cursor = liveNotifyCursor.get(job.id);
+  const head = jobLogHead(job);
+  const turnsKey = jobTurnsKey(job);
+  let logStart = 0;
+  if (cursor && cursor.head === head) {
+    logStart = Math.max(0, cursor.count - 1);
+  }
+  const turnsChanged = !cursor || cursor.turnsKey !== turnsKey;
+  rememberLiveCursor(job);
+  return {
+    updatedAt: job.updatedAt,
+    status: job.status,
+    startedAt: job.startedAt,
+    finishedAt: job.finishedAt,
+    error: job.error,
+    result: job.result,
+    usage: job.usage,
+    activeTurnId: job.activeTurnId,
+    runId: job.runId,
+    agentId: job.agentId,
+    mode: job.mode,
+    model: job.model,
+    ...(turnsChanged ? { turns: job.turns } : {}),
+    logStart,
+    logs: job.logs.slice(logStart),
+  };
+}
+
+function emitJobLiveEvent(jobId: string, event: JobLiveEvent): void {
+  const listeners = jobLiveListeners.get(jobId);
+  if (!listeners?.size) return;
+  for (const listener of listeners) {
+    try {
+      listener(event);
+    } catch (error) {
+      console.error("推送任务更新失败", error);
+    }
+  }
+}
+
+function flushJobLiveUpdates(jobId: string): void {
+  const timer = liveNotifyTimers.get(jobId);
+  if (timer) {
+    clearTimeout(timer);
+    liveNotifyTimers.delete(jobId);
+  }
+  const job = jobs.get(jobId);
+  if (!job || !jobLiveListeners.get(jobId)?.size) return;
+  emitJobLiveEvent(jobId, { type: "update", patch: buildJobLivePatch(job) });
+}
+
+function notifyJobSubscribers(jobId: string, immediate = false): void {
+  const rootId = getConversationRootId(jobId);
+  if (!jobLiveListeners.get(rootId)?.size) return;
+  if (immediate) {
+    flushJobLiveUpdates(rootId);
+    return;
+  }
+  if (liveNotifyTimers.has(rootId)) return;
+  liveNotifyTimers.set(
+    rootId,
+    setTimeout(() => {
+      liveNotifyTimers.delete(rootId);
+      flushJobLiveUpdates(rootId);
+    }, LIVE_NOTIFY_DEBOUNCE_MS),
+  );
+}
+
+export function subscribeJobUpdates(jobId: string, listener: JobLiveListener): () => void {
+  const rootId = getConversationRootId(jobId);
+  let listeners = jobLiveListeners.get(rootId);
+  if (!listeners) {
+    listeners = new Set();
+    jobLiveListeners.set(rootId, listeners);
+  }
+  listeners.add(listener);
+
+  const job = jobs.get(rootId);
+  if (job) {
+    rememberLiveCursor(job);
+    listener({ type: "snapshot", job });
+  }
+
+  return () => {
+    const current = jobLiveListeners.get(rootId);
+    if (!current) return;
+    current.delete(listener);
+    if (current.size > 0) return;
+    jobLiveListeners.delete(rootId);
+    const timer = liveNotifyTimers.get(rootId);
+    if (timer) {
+      clearTimeout(timer);
+      liveNotifyTimers.delete(rootId);
+    }
+    liveNotifyCursor.delete(rootId);
+  };
+}
+
 function schedulePersist(immediate = false): void {
   if (immediate) {
     persistDirtySince = 0;
@@ -311,6 +460,7 @@ function toJobSummary(job: JobRecord): JobSummary {
     usage: job.usage,
     activeTurnId: job.activeTurnId,
     submittedBy: job.submittedBy,
+    scheduleId: job.scheduleId,
     turns: (job.turns ?? []).map((turn) => ({
       id: turn.id,
       status: turn.status,
@@ -575,6 +725,7 @@ export function createJob(input: {
   autoReview?: boolean;
   disallowedTools?: ToolName[];
   images?: JobImageMeta[];
+  scheduleId?: string;
 }): JobRecord {
   const timestamp = now();
   const turn = createTurn({
@@ -611,10 +762,12 @@ export function createJob(input: {
     turns: [turn],
     activeTurnId: turn.id,
     logs: [],
+    scheduleId: input.scheduleId,
   };
 
   jobs.set(job.id, job);
-  appendJobLog(job.id, "info", `任务已创建（${describeRunSettings(input.mode, input.model)}），等待执行。`, turn.id);
+  const source = input.scheduleId ? "由定时规则触发，" : "";
+  appendJobLog(job.id, "info", `任务已创建（${source}${describeRunSettings(input.mode, input.model)}），等待执行。`, turn.id);
   schedulePersist(true);
   return job;
 }
@@ -631,6 +784,7 @@ export function enqueueJobTurn(
     sandbox?: boolean;
     autoReview?: boolean;
     disallowedTools?: ToolName[];
+    extraProjects?: ExtraProjectRef[];
   },
 ): { job: JobRecord; turn: JobTurn } {
   const rootId = getConversationRootId(jobId);
@@ -657,6 +811,7 @@ export function enqueueJobTurn(
   if (input.sandbox !== undefined) job.sandbox = input.sandbox;
   if (input.autoReview !== undefined) job.autoReview = input.autoReview;
   if (input.disallowedTools) job.disallowedTools = input.disallowedTools;
+  if (input.extraProjects) job.extraProjects = input.extraProjects;
   job.updatedAt = now();
   syncJobStatusFromTurns(job);
 
@@ -693,6 +848,7 @@ export function updateJob(id: string, patch: Partial<JobRecord>): JobRecord {
   jobs.set(job.id, job);
   markJobDirty(job.id);
   schedulePersist(true);
+  notifyJobSubscribers(job.id, true);
   return job;
 }
 
@@ -710,6 +866,7 @@ export function updateTurn(jobId: string, turnId: string, patch: Partial<JobTurn
   job.updatedAt = now();
   markJobDirty(job.id);
   schedulePersist(true);
+  notifyJobSubscribers(job.id, true);
   return turn;
 }
 
@@ -767,4 +924,5 @@ export function appendJobLog(
   job.updatedAt = now();
   markJobDirty(job.id);
   schedulePersist();
+  notifyJobSubscribers(job.id);
 }
