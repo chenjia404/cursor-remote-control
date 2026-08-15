@@ -150,7 +150,6 @@ export function assertRequiredConfig(): void {
   const missing: string[] = [];
 
   if (!config.cursorApiKey) missing.push("CURSOR_API_KEY");
-  if (!config.adminPasswordHash) missing.push("ADMIN_PASSWORD_HASH");
   if (!config.sessionSecret) missing.push("SESSION_SECRET");
 
   if (missing.length > 0) {

@@ -47,7 +47,10 @@ pnpm generate-icons
 ## 关键目录和文件
 
 - `src/server.ts`：Fastify 服务入口、路由注册、静态文件托管。
-- `src/auth.ts`：管理员登录、密码哈希、Session Cookie、CSRF 校验。
+- `src/db.ts`：SQLite（`data/app.db`）连接、建表与 WAL。
+- `src/users.ts` / `src/permissions.ts`：用户、角色默认权限与按人覆盖。
+- `src/auth.ts`：多会话 Cookie / CSRF / 权限中间件。
+- `src/passwords.ts`：scrypt 密码哈希。
 - `src/config.ts`：环境变量读取和配置校验。
 - `src/projects.ts`：已选项目持久化、目录浏览、路径安全校验与项目标记检测。
 - `src/jobs.ts`：任务历史、多轮对话、任务状态、日志持久化。
@@ -57,7 +60,7 @@ pnpm generate-icons
 - `src/public/`：移动端 Web 页面和 PWA 静态资源。
 - `src/public/i18n.js`：前端中英文文案与语言切换（偏好保存在 localStorage）。
 - `README.en.md`：英文说明文档，与 `README.md` 互链。
-- `scripts/init-admin.ts`：生成管理员随机密码、密码哈希和 Session 密钥。
+- `scripts/init-admin.ts`：生成管理员随机密码，写入 SQLite 管理员并更新 Session 密钥。
 - `scripts/generate-icons.ts`：从 SVG 生成 PWA PNG 图标。
 - `.env.example`：配置模板，不包含真实密钥。
 - `data/`：运行时数据目录，不要提交其中的真实数据。
@@ -66,7 +69,8 @@ pnpm generate-icons
 
 - 不要添加任意 Shell 输入框。
 - 不要允许网页直接执行系统命令。
-- 不要把 `.env`、管理员密码、`CURSOR_API_KEY`、Session 密钥或 `data/` 下的运行时数据写入 Git。
+- 不要把 `.env`、管理员密码、`CURSOR_API_KEY`、Session 密钥或 `data/` 下的运行时数据（含 `app.db`）写入 Git。
+- 用户存在 SQLite，不做自助注册；状态变更接口必须登录 + CSRF，并按权限过滤项目与任务。
 - 提交说明、代码注释、文档和示例中不要写入真实域名、IP、隧道地址、机器名、邮箱、密钥或个人云服务实例名；用泛称（CDN、反代）或占位符（`https://your.example.com`）。详见 `.cursor/rules/no-private-info.mdc`。
 - `PROJECT_ROOTS` 只应配置本机 Windows 项目根目录，例如 `E:\code;D:\code;C:\code`，不要配置整个系统盘，也不要使用 Docker 容器内路径。
 

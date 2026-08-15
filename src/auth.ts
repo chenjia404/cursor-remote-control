@@ -1,29 +1,37 @@
 import crypto from "node:crypto";
-import fs from "node:fs/promises";
-import path from "node:path";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { config } from "./config.js";
+import { getDb } from "./db.js";
+import { hasPermission, type Permission } from "./permissions.js";
+import { getUserById, getUserByUsername, toPublicUser, type UserRecord } from "./users.js";
 
 const SESSION_COOKIE = "crc_session";
 /** 记住登录时长：90 天 */
 const SESSION_TTL_SECONDS = 60 * 60 * 24 * 90;
+const MAX_SESSIONS_PER_USER = 10;
 
 type SessionPayload = {
+  userId: string;
   username: string;
   sessionId: string;
   expiresAt: number;
   csrfToken: string;
 };
 
-type ActiveSessionStore = {
-  sessionId: string;
+type SessionRow = {
+  session_id: string;
+  user_id: string;
   username: string;
-  issuedAt: number;
-  expiresAt: number;
+  issued_at: number;
+  expires_at: number;
 };
 
 export type AuthenticatedUser = {
+  id: string;
   username: string;
+  role: UserRecord["role"];
+  permissions: Permission[];
+  allowedProjectIds: string[];
 };
 
 declare module "fastify" {
@@ -33,10 +41,6 @@ declare module "fastify" {
     sessionId?: string;
   }
 }
-
-let activeSession: ActiveSessionStore | null = null;
-let activeSessionLoaded = false;
-let activeSessionWriteChain = Promise.resolve();
 
 function base64url(input: Buffer | string): string {
   return Buffer.from(input).toString("base64url");
@@ -52,75 +56,6 @@ function getSessionSecret(): string {
   }
 
   return config.sessionSecret;
-}
-
-function activeSessionFile(): string {
-  return path.join(config.dataDir, "active-session.json");
-}
-
-function isActiveSessionValid(session: ActiveSessionStore | null): session is ActiveSessionStore {
-  return Boolean(session && session.expiresAt >= Date.now() && session.username === config.adminUsername);
-}
-
-async function persistActiveSession(): Promise<void> {
-  await fs.mkdir(config.dataDir, { recursive: true });
-  if (!activeSession) {
-    try {
-      await fs.unlink(activeSessionFile());
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException).code;
-      if (code !== "ENOENT") throw error;
-    }
-    return;
-  }
-
-  await fs.writeFile(activeSessionFile(), JSON.stringify(activeSession, null, 2), "utf8");
-}
-
-function schedulePersistActiveSession(): void {
-  activeSessionWriteChain = activeSessionWriteChain.then(persistActiveSession).catch((error) => {
-    console.error("保存活动会话失败", error);
-  });
-}
-
-export async function loadActiveSession(): Promise<void> {
-  if (activeSessionLoaded) return;
-  activeSessionLoaded = true;
-
-  try {
-    const text = await fs.readFile(activeSessionFile(), "utf8");
-    const stored = JSON.parse(text) as ActiveSessionStore;
-    activeSession = isActiveSessionValid(stored) ? stored : null;
-    if (!activeSession) {
-      schedulePersistActiveSession();
-    }
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code !== "ENOENT") {
-      console.error("读取活动会话失败", error);
-    }
-    activeSession = null;
-  }
-}
-
-export function generateRandomPassword(): string {
-  return crypto.randomBytes(24).toString("base64url");
-}
-
-export function generatePasswordHash(password: string): string {
-  const salt = crypto.randomBytes(16).toString("base64url");
-  const derivedKey = crypto.scryptSync(password, salt, 64).toString("base64url");
-  return `scrypt$${salt}$${derivedKey}`;
-}
-
-export function verifyPassword(password: string, storedHash: string): boolean {
-  const [algorithm, salt, key] = storedHash.split("$");
-  if (algorithm !== "scrypt" || !salt || !key) return false;
-
-  const expected = Buffer.from(key, "base64url");
-  const actual = crypto.scryptSync(password, salt, expected.length);
-
-  return expected.length === actual.length && crypto.timingSafeEqual(expected, actual);
 }
 
 /**
@@ -141,18 +76,72 @@ export function isHttpsClientRequest(request?: FastifyRequest): boolean {
     return true;
   }
 
-  // Cloudflare 常见附加头
   const cfVisitor = request.headers["cf-visitor"];
   if (typeof cfVisitor === "string" && /"scheme"\s*:\s*"https"/i.test(cfVisitor)) {
     return true;
   }
 
-  // 配置声明公网是 HTTPS 时，即使某次请求缺转发头，也按 Secure Cookie 处理
   return config.cookieSecure || config.publicBaseUrlIsHttps;
 }
 
 function cookieSecureForRequest(request?: FastifyRequest): boolean {
   return isHttpsClientRequest(request);
+}
+
+function pruneExpiredSessions(): void {
+  getDb().prepare("DELETE FROM sessions WHERE expires_at < ?").run(Date.now());
+}
+
+function limitUserSessions(userId: string): void {
+  const rows = getDb()
+    .prepare("SELECT session_id FROM sessions WHERE user_id = ? ORDER BY issued_at DESC")
+    .all(userId) as Array<{ session_id: string }>;
+  if (rows.length <= MAX_SESSIONS_PER_USER) return;
+
+  const del = getDb().prepare("DELETE FROM sessions WHERE session_id = ?");
+  for (const row of rows.slice(MAX_SESSIONS_PER_USER)) {
+    del.run(row.session_id);
+  }
+}
+
+function insertSession(row: SessionRow): void {
+  getDb()
+    .prepare(
+      `INSERT INTO sessions (session_id, user_id, username, issued_at, expires_at)
+       VALUES (?, ?, ?, ?, ?)`,
+    )
+    .run(row.session_id, row.user_id, row.username, row.issued_at, row.expires_at);
+}
+
+function getStoredSession(sessionId: string): SessionRow | undefined {
+  return getDb().prepare("SELECT * FROM sessions WHERE session_id = ?").get(sessionId) as SessionRow | undefined;
+}
+
+export function deleteSession(sessionId: string): void {
+  getDb().prepare("DELETE FROM sessions WHERE session_id = ?").run(sessionId);
+}
+
+export function deleteUserSessions(userId: string, exceptSessionId?: string): void {
+  if (exceptSessionId) {
+    getDb().prepare("DELETE FROM sessions WHERE user_id = ? AND session_id != ?").run(userId, exceptSessionId);
+    return;
+  }
+  getDb().prepare("DELETE FROM sessions WHERE user_id = ?").run(userId);
+}
+
+export function deleteAllSessions(): void {
+  getDb().prepare("DELETE FROM sessions").run();
+}
+
+export function toAuthenticatedUser(user: UserRecord): AuthenticatedUser {
+  const publicUser = toPublicUser(user);
+  return {
+    id: publicUser.id,
+    username: publicUser.username,
+    role: publicUser.role,
+    permissions: publicUser.permissions,
+    allowedProjectIds: publicUser.allowedProjectIds,
+  };
 }
 
 export type IssuedSession = {
@@ -163,14 +152,17 @@ export type IssuedSession = {
 
 export async function issueSession(
   reply: FastifyReply,
-  username: string,
+  user: UserRecord,
   request?: FastifyRequest,
 ): Promise<IssuedSession> {
+  pruneExpiredSessions();
+
   const sessionId = crypto.randomBytes(32).toString("base64url");
   const expiresAt = Date.now() + SESSION_TTL_SECONDS * 1000;
   const csrfToken = crypto.randomBytes(24).toString("base64url");
   const payload: SessionPayload = {
-    username,
+    userId: user.id,
+    username: user.username,
     sessionId,
     expiresAt,
     csrfToken,
@@ -178,13 +170,14 @@ export async function issueSession(
   const encoded = base64url(JSON.stringify(payload));
   const cookieValue = `${encoded}.${sign(encoded)}`;
 
-  activeSession = {
-    sessionId,
-    username,
-    issuedAt: Date.now(),
-    expiresAt,
-  };
-  await persistActiveSession();
+  insertSession({
+    session_id: sessionId,
+    user_id: user.id,
+    username: user.username,
+    issued_at: Date.now(),
+    expires_at: expiresAt,
+  });
+  limitUserSessions(user.id);
 
   reply.setCookie(SESSION_COOKIE, cookieValue, {
     httpOnly: true,
@@ -202,10 +195,7 @@ export async function clearSession(
   sessionId?: string,
   request?: FastifyRequest,
 ): Promise<void> {
-  if (activeSession && (!sessionId || activeSession.sessionId === sessionId)) {
-    activeSession = null;
-    await persistActiveSession();
-  }
+  if (sessionId) deleteSession(sessionId);
 
   reply.clearCookie(SESSION_COOKIE, {
     path: "/",
@@ -221,7 +211,6 @@ function readBearerToken(request: FastifyRequest): string | null {
     if (match?.[1]?.trim()) return match[1].trim();
   }
 
-  // 部分反代会去掉 Authorization，额外支持自定义头
   const alt = request.headers["x-crc-session"];
   if (typeof alt === "string" && alt.trim()) return alt.trim();
   if (Array.isArray(alt) && alt[0]?.trim()) return alt[0].trim();
@@ -234,15 +223,30 @@ function parseSessionToken(rawToken: string): SessionPayload | null {
 
   try {
     const payload = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")) as SessionPayload;
-    if (!payload.sessionId || payload.expiresAt < Date.now()) return null;
-    if (payload.username !== config.adminUsername) return null;
-    if (!isActiveSessionValid(activeSession) || activeSession.sessionId !== payload.sessionId) {
+    if (!payload.sessionId || !payload.userId || payload.expiresAt < Date.now()) return null;
+
+    const stored = getStoredSession(payload.sessionId);
+    if (!stored || stored.user_id !== payload.userId || stored.expires_at < Date.now()) {
       return null;
     }
-    return payload;
+
+    const user = getUserById(payload.userId) ?? getUserByUsername(payload.username);
+    if (!user || user.disabled) return null;
+
+    return {
+      ...payload,
+      userId: user.id,
+      username: user.username,
+    };
   } catch {
     return null;
   }
+}
+
+function resolveUserFromSession(session: SessionPayload): AuthenticatedUser | null {
+  const user = getUserById(session.userId) ?? getUserByUsername(session.username);
+  if (!user || user.disabled) return null;
+  return toAuthenticatedUser(user);
 }
 
 /** 当前请求上的有效会话令牌（Cookie 或 Bearer），供前端持久化以免隔天丢失 */
@@ -267,7 +271,13 @@ export async function requireAuth(request: FastifyRequest, reply: FastifyReply):
     return;
   }
 
-  request.user = { username: session.username };
+  const user = resolveUserFromSession(session);
+  if (!user) {
+    reply.code(401).send({ error: "未登录" });
+    return;
+  }
+
+  request.user = user;
   request.csrfToken = session.csrfToken;
   request.sessionId = session.sessionId;
 }
@@ -285,11 +295,35 @@ export async function requireCsrf(request: FastifyRequest, reply: FastifyReply):
     return;
   }
 
-  request.user = { username: session.username };
+  const user = resolveUserFromSession(session);
+  if (!user) {
+    reply.code(401).send({ error: "未登录" });
+    return;
+  }
+
+  request.user = user;
   request.csrfToken = session.csrfToken;
   request.sessionId = session.sessionId;
 }
 
+export function requirePermission(permission: Permission) {
+  return async (request: FastifyRequest, reply: FastifyReply): Promise<void> => {
+    if (reply.sent) return;
+    if (!request.user) {
+      await requireAuth(request, reply);
+      if (reply.sent) return;
+    }
+
+    if (!request.user || !hasPermission(request.user.permissions, permission)) {
+      reply.code(403).send({ error: "没有权限" });
+    }
+  };
+}
+
 export function getSessionCookieName(): string {
   return SESSION_COOKIE;
+}
+
+export async function loadActiveSession(): Promise<void> {
+  pruneExpiredSessions();
 }

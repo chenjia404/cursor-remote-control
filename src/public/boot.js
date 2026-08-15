@@ -4,7 +4,7 @@
 (function () {
   var SESSION_KEY = "crc_session_token";
   var CSRF_KEY = "crc_csrf_token";
-  var APP_VERSION = "0.2.32";
+  var APP_VERSION = "0.3.0";
   var csrfToken = "";
   var sessionToken = "";
   var appLoadPromise = null;
@@ -95,7 +95,10 @@
     window.__crcSession = {
       csrfToken: csrfToken,
       sessionToken: sessionToken,
-      username: session.username || "admin",
+      username: session.username || "",
+      role: session.role,
+      permissions: session.permissions,
+      allowedProjectIds: session.allowedProjectIds,
     };
   }
 
@@ -194,11 +197,7 @@
       if (!restoredToken) {
         throw new Error("缺少会话令牌");
       }
-      await handOffToApp({
-        username: session.username,
-        csrfToken: session.csrfToken,
-        sessionToken: restoredToken,
-      });
+      await handOffToApp(Object.assign({}, session, { sessionToken: restoredToken }));
     } catch (_error) {
       if (sessionToken) clearAuth();
       setLoggedIn(false);

@@ -12,7 +12,8 @@ The UI supports Chinese and English. Use the language switcher in the top-right 
 
 ## Features
 
-- Admin username/password login; default username is `admin`.
+- Multi-user login with admin, operator, and viewer roles. Admins can override permissions per user and assign confirmed projects.
+- Default admin username is `admin`, created by `pnpm init-admin` in SQLite.
 - Listens on port `20267` by default.
 - Browse directories within `PROJECT_ROOTS` and confirm projects; the dropdown only lists confirmed projects.
 - Runs Agent tasks in the project directory via Cursor SDK local mode.
@@ -41,7 +42,7 @@ Copy-Item .env.example .env
 pnpm init-admin
 ```
 
-`pnpm init-admin` generates a strong random password and writes the password hash and session secret into `.env`. The password is shown only once—save it immediately.
+`pnpm init-admin` generates a strong random password, writes the admin user into SQLite, and updates the session secret in `.env`. The password is shown only once—save it immediately. Add more accounts from Settings → Users. Do not share one admin password.
 
 Then edit `.env`:
 
@@ -89,7 +90,7 @@ If you switch back from Docker to the host:
 
 1. Stop and remove the compose services (for example `docker compose down`).
 2. Make sure `.env` `PROJECT_ROOTS` uses Windows paths (such as `E:\code;D:\code;C:\code`), not container paths like `/workspace/...`.
-3. Keep `DATA_DIR` as `./data` so existing jobs and session files remain available.
+3. Keep `DATA_DIR` as `./data`. The first start imports existing `jobs.json` / `selected-projects.json` into `data/app.db` and leaves the JSON files as backups.
 4. Run `pnpm install` if needed, then `pnpm build && pnpm start` or `pnpm dev`.
 
 ## Install on a phone
@@ -114,7 +115,8 @@ If you still try compose, note that it overrides `PROJECT_ROOTS` with container 
 
 ## Security notes
 
-- Do not commit `.env`, runtime files under `data/` (such as `jobs.json`, `selected-projects.json`), or the admin password to Git.
+- Do not commit `.env`, runtime files under `data/` (such as `app.db` or legacy `jobs.json`), or the admin password to Git.
 - Public access must use HTTPS, with `COOKIE_SECURE=true`.
 - Do not set `PROJECT_ROOTS` to an entire system drive; prefer roots like `E:\code;D:\code;C:\code`.
-- This console is intended for personal use; sharing one admin account with multiple people is not recommended.
+- Share the console by permission. Do not share one admin password. Two agents on the same project can overwrite each other’s files.
+- There is no self-registration; only users with “Manage users” can create accounts.

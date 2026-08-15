@@ -7,7 +7,7 @@ import {
   setLocale,
   t,
   translateApiError,
-} from "./i18n.js?v=0.2.32";
+} from "./i18n.js?v=0.3.0";
 
 let markedRef = null;
 let purifyRef = null;
@@ -135,9 +135,88 @@ const state = {
     autoReview: false,
     disallowedTools: [],
   },
+  auth: {
+    username: "",
+    role: "viewer",
+    permissions: [],
+    allowedProjectIds: [],
+  },
+  users: [],
+  permissionCatalog: [],
+  roleDefaults: {},
+  editingUserId: "",
 };
 
 initLocale();
+
+function currentUsername() {
+  return String(state.auth?.username || window.__crcSession?.username || "")
+    .trim()
+    .toLowerCase();
+}
+
+function prefKey(base) {
+  const user = currentUsername();
+  return user ? `${base}::${user}` : base;
+}
+
+function readPref(base) {
+  try {
+    const keyed = localStorage.getItem(prefKey(base));
+    if (keyed != null) return keyed;
+    return localStorage.getItem(base);
+  } catch {
+    return null;
+  }
+}
+
+function writePref(base, value) {
+  try {
+    localStorage.setItem(prefKey(base), value);
+  } catch {
+    // localStorage 不可用时忽略
+  }
+}
+
+function hasPerm(permission) {
+  return Boolean(state.auth?.permissions?.includes(permission));
+}
+
+function isOwnJob(job) {
+  return Boolean(job?.submittedBy && job.submittedBy === state.auth?.username);
+}
+
+function roleLabel(role) {
+  return t(`users.role.${role || "viewer"}`);
+}
+
+function applyAuthFromSession(session) {
+  state.auth = {
+    username: session?.username || "",
+    role: session?.role || "viewer",
+    permissions: Array.isArray(session?.permissions) ? session.permissions : [],
+    allowedProjectIds: Array.isArray(session?.allowedProjectIds) ? session.allowedProjectIds : [],
+  };
+  applyAuthUi();
+}
+
+function applyAuthUi() {
+  const canCreate = hasPerm("jobs.create");
+  const canBrowse = hasPerm("projects.browse");
+  const canSelect = hasPerm("projects.select");
+  const canManageUsers = hasPerm("users.manage");
+
+  $("#headerNewTaskButton")?.classList.toggle("hidden", !canCreate);
+  $("#sessionNewTaskButton")?.classList.toggle("hidden", !canCreate);
+  $("#browseOpenButton")?.classList.toggle("hidden", !canBrowse);
+  $("#browseSelectButton")?.classList.toggle("hidden", !canSelect);
+  $("#usersManageButton")?.classList.toggle("hidden", !canManageUsers);
+
+  const accountName = $("#settingsAccountName");
+  const accountRole = $("#settingsAccountRole");
+  if (accountName) accountName.textContent = state.auth.username || "—";
+  if (accountRole) accountRole.textContent = roleLabel(state.auth.role);
+}
 
 const $ = (selector) => document.querySelector(selector);
 
@@ -176,6 +255,9 @@ function applyLocale(locale) {
   renderModelSettings("followUp");
   renderExtraWorkspaces();
   renderDisallowedTools("submit", collectDisallowedTools("submit"));
+  applyAuthUi();
+  renderUserList();
+  renderUserEditForm();
   renderDisallowedTools("followUp", collectDisallowedTools("followUp"));
   syncModeSegmentFromSelect();
   updateFilterChips();
@@ -184,7 +266,7 @@ function applyLocale(locale) {
 
 function loadSavedMode() {
   try {
-    const saved = localStorage.getItem(MODE_STORAGE_KEY);
+    const saved = readPref(MODE_STORAGE_KEY);
     if (saved === "agent" || saved === "plan") return saved;
   } catch {
     // localStorage 不可用时忽略
@@ -194,7 +276,7 @@ function loadSavedMode() {
 
 function saveMode(mode) {
   try {
-    localStorage.setItem(MODE_STORAGE_KEY, mode);
+    writePref(MODE_STORAGE_KEY, mode);
   } catch {
     // localStorage 不可用时忽略
   }
@@ -225,7 +307,7 @@ function defaultAgentOptions() {
 
 function loadSavedAgentOptions() {
   try {
-    const saved = JSON.parse(localStorage.getItem(AGENT_OPTIONS_KEY) || "null");
+    const saved = JSON.parse(readPref(AGENT_OPTIONS_KEY) || "null");
     if (!saved || typeof saved !== "object") return defaultAgentOptions();
     return {
       loadLocalSettings: saved.loadLocalSettings !== false,
@@ -243,7 +325,7 @@ function loadSavedAgentOptions() {
 
 function saveAgentOptions(options) {
   try {
-    localStorage.setItem(AGENT_OPTIONS_KEY, JSON.stringify(options));
+    writePref(AGENT_OPTIONS_KEY, JSON.stringify(options));
   } catch {
     // ignore
   }
@@ -417,7 +499,7 @@ function formatUsage(usage) {
 
 function loadSavedTab() {
   try {
-    const saved = localStorage.getItem(TAB_STORAGE_KEY);
+    const saved = readPref(TAB_STORAGE_KEY);
     if (saved === "session" || saved === "history" || saved === "projects") return saved;
   } catch {
     // localStorage 不可用时忽略
@@ -427,7 +509,7 @@ function loadSavedTab() {
 
 function saveTab(tab) {
   try {
-    localStorage.setItem(TAB_STORAGE_KEY, tab);
+    writePref(TAB_STORAGE_KEY, tab);
   } catch {
     // localStorage 不可用时忽略
   }
@@ -435,7 +517,7 @@ function saveTab(tab) {
 
 function loadHistoryFilter() {
   try {
-    const saved = localStorage.getItem(HISTORY_FILTER_KEY);
+    const saved = readPref(HISTORY_FILTER_KEY);
     if (saved === "all" || saved === "active" || saved === "finished" || saved === "failed") return saved;
   } catch {
     // localStorage 不可用时忽略
@@ -445,7 +527,7 @@ function loadHistoryFilter() {
 
 function saveHistoryFilter(filter) {
   try {
-    localStorage.setItem(HISTORY_FILTER_KEY, filter);
+    writePref(HISTORY_FILTER_KEY, filter);
   } catch {
     // localStorage 不可用时忽略
   }
@@ -453,7 +535,7 @@ function saveHistoryFilter(filter) {
 
 function loadArchivedJobIds() {
   try {
-    const raw = localStorage.getItem(ARCHIVED_JOBS_KEY);
+    const raw = readPref(ARCHIVED_JOBS_KEY);
     const list = raw ? JSON.parse(raw) : [];
     return new Set(Array.isArray(list) ? list : []);
   } catch {
@@ -463,7 +545,7 @@ function loadArchivedJobIds() {
 
 function saveArchivedJobIds() {
   try {
-    localStorage.setItem(ARCHIVED_JOBS_KEY, JSON.stringify([...state.archivedJobIds]));
+    writePref(ARCHIVED_JOBS_KEY, JSON.stringify([...state.archivedJobIds]));
   } catch {
     // localStorage 不可用时忽略
   }
@@ -471,7 +553,7 @@ function saveArchivedJobIds() {
 
 function loadNotifyEnabled() {
   try {
-    return localStorage.getItem(NOTIFY_STORAGE_KEY) === "1";
+    return readPref(NOTIFY_STORAGE_KEY) === "1";
   } catch {
     return false;
   }
@@ -480,7 +562,7 @@ function loadNotifyEnabled() {
 function saveNotifyEnabled(enabled) {
   state.notifyEnabled = Boolean(enabled);
   try {
-    localStorage.setItem(NOTIFY_STORAGE_KEY, state.notifyEnabled ? "1" : "0");
+    writePref(NOTIFY_STORAGE_KEY, state.notifyEnabled ? "1" : "0");
   } catch {
     // localStorage 不可用时忽略
   }
@@ -488,7 +570,7 @@ function saveNotifyEnabled(enabled) {
 
 function isOnboardingDone() {
   try {
-    return localStorage.getItem(ONBOARDING_STORAGE_KEY) === "1";
+    return readPref(ONBOARDING_STORAGE_KEY) === "1";
   } catch {
     return false;
   }
@@ -496,7 +578,7 @@ function isOnboardingDone() {
 
 function markOnboardingDone() {
   try {
-    localStorage.setItem(ONBOARDING_STORAGE_KEY, "1");
+    writePref(ONBOARDING_STORAGE_KEY, "1");
   } catch {
     // localStorage 不可用时忽略
   }
@@ -524,7 +606,7 @@ function updateLayoutState() {
 
 function loadSavedProjectId() {
   try {
-    return localStorage.getItem(PROJECT_STORAGE_KEY) || "";
+    return readPref(PROJECT_STORAGE_KEY) || "";
   } catch {
     return "";
   }
@@ -533,8 +615,8 @@ function loadSavedProjectId() {
 function saveSelectedProjectId(projectId) {
   state.selectedProjectId = projectId || "";
   try {
-    if (projectId) localStorage.setItem(PROJECT_STORAGE_KEY, projectId);
-    else localStorage.removeItem(PROJECT_STORAGE_KEY);
+    if (projectId) writePref(PROJECT_STORAGE_KEY, projectId);
+    else writePref(PROJECT_STORAGE_KEY, "");
   } catch {
     // localStorage 不可用时忽略
   }
@@ -646,7 +728,7 @@ function defaultParamsForModel(model) {
 
 function loadSavedModel() {
   try {
-    const saved = JSON.parse(localStorage.getItem(MODEL_STORAGE_KEY) || "null");
+    const saved = JSON.parse(readPref(MODEL_STORAGE_KEY) || "null");
     if (saved?.id) return { id: String(saved.id), params: Array.isArray(saved.params) ? saved.params : [] };
   } catch {
     // localStorage 不可用或数据损坏时忽略
@@ -656,7 +738,7 @@ function loadSavedModel() {
 
 function saveModelSelection(selection) {
   try {
-    localStorage.setItem(MODEL_STORAGE_KEY, JSON.stringify(selection));
+    writePref(MODEL_STORAGE_KEY, JSON.stringify(selection));
   } catch {
     // localStorage 不可用时忽略
   }
@@ -995,7 +1077,7 @@ function renderProjectList() {
 
   if (state.projects.length === 0) {
     list.innerHTML = `<p class="empty">${escapeHtml(t("project.noneSelected"))}</p>`;
-    if (hint) hint.textContent = t("submit.projectHint");
+    if (hint) hint.textContent = hasPerm("projects.browse") ? t("submit.projectHint") : t("submit.projectHintAssigned");
     updateNewTaskProjectLabel();
     return;
   }
@@ -1023,14 +1105,18 @@ function renderProjectList() {
           </div>
           <div class="project-item-actions">
             <button type="button" class="ghost small project-use-btn" data-project-id="${escapeHtml(project.id)}"${selected ? " disabled" : ""}>${escapeHtml(useLabel)}</button>
-            <button type="button" class="ghost small danger project-remove-btn" data-project-id="${escapeHtml(project.id)}">${escapeHtml(t("project.remove"))}</button>
+            ${
+              hasPerm("projects.select")
+                ? `<button type="button" class="ghost small danger project-remove-btn" data-project-id="${escapeHtml(project.id)}">${escapeHtml(t("project.remove"))}</button>`
+                : ""
+            }
           </div>
         </article>
       `;
     })
     .join("");
 
-  if (hint) hint.textContent = t("submit.projectHint");
+  if (hint) hint.textContent = hasPerm("projects.browse") ? t("submit.projectHint") : t("submit.projectHintAssigned");
   updateNewTaskProjectLabel();
 }
 
@@ -1185,7 +1271,7 @@ function bindComposerPanels() {
   if (options && options.dataset.bound !== "1") {
     options.dataset.bound = "1";
     try {
-      if (localStorage.getItem(FOLLOW_UP_OPTIONS_KEY) === "1") {
+      if (readPref(FOLLOW_UP_OPTIONS_KEY) === "1") {
         options.open = true;
       }
     } catch {
@@ -1193,7 +1279,7 @@ function bindComposerPanels() {
     }
     options.addEventListener("toggle", () => {
       try {
-        localStorage.setItem(FOLLOW_UP_OPTIONS_KEY, options.open ? "1" : "0");
+        writePref(FOLLOW_UP_OPTIONS_KEY, options.open ? "1" : "0");
       } catch {
         // localStorage 不可用时忽略
       }
@@ -1220,7 +1306,7 @@ function updateSessionJobLayout(hasJob) {
 
 function loadSessionSummaryOpen() {
   try {
-    return localStorage.getItem(SESSION_SUMMARY_KEY) === "1";
+    return readPref(SESSION_SUMMARY_KEY) === "1";
   } catch {
     return false;
   }
@@ -1228,7 +1314,7 @@ function loadSessionSummaryOpen() {
 
 function saveSessionSummaryOpen(open) {
   try {
-    localStorage.setItem(SESSION_SUMMARY_KEY, open ? "1" : "0");
+    writePref(SESSION_SUMMARY_KEY, open ? "1" : "0");
   } catch {
     // localStorage 不可用时忽略
   }
@@ -1239,7 +1325,7 @@ function updateComposerDock() {
   const appShell = $("#appView");
   if (!dock || !appShell) return;
 
-  const show = state.inChat && Boolean(state.currentJob);
+  const show = state.inChat && Boolean(state.currentJob) && canFollowUp(state.currentJob);
   dock.classList.toggle("hidden", !show);
   appShell.classList.toggle("has-composer", show);
 
@@ -1547,7 +1633,11 @@ function renderJobs() {
           <div class="job-item-summary">
             <strong>${escapeHtml(job.project.name)}${archivedBadge}<span class="status status-${job.status}">${statusText(job.status)}</span>${modeBadge(job.mode)}${formatModelBadge(job.model)}</strong>
             <div>${escapeHtml(job.promptSummary)}</div>
-            <div class="meta">${escapeHtml(formatDateTime(job.createdAt))}</div>
+            <div class="meta">${escapeHtml(formatDateTime(job.createdAt))}${
+              hasPerm("jobs.viewAll") && job.submittedBy
+                ? ` · ${escapeHtml(t("history.submittedBy", { name: job.submittedBy }))}`
+                : ""
+            }</div>
           </div>
           <div class="job-item-actions">
             <button type="button" class="ghost job-archive-btn" data-job-id="${escapeHtml(job.id)}">${escapeHtml(archiveLabel)}</button>
@@ -1654,11 +1744,15 @@ async function openJob(jobId) {
 }
 
 function canFollowUp(job) {
-  return Boolean(job);
+  if (!job || !hasPerm("jobs.followUp")) return false;
+  if (isOwnJob(job) || !job.submittedBy) return true;
+  return hasPerm("jobs.operateOthers");
 }
 
 function canStopJob(job) {
-  return conversationIsBusy(job);
+  if (!conversationIsBusy(job) || !hasPerm("jobs.cancel")) return false;
+  if (isOwnJob(job) || !job.submittedBy) return true;
+  return hasPerm("jobs.operateOthers");
 }
 
 let followUpBoundJobId = "";
@@ -2184,7 +2278,165 @@ async function stopCurrentJob() {
   }
 }
 
+function effectivePermissions(role, grants = [], denies = []) {
+  const defaults = new Set(state.roleDefaults[role] || []);
+  for (const grant of grants) defaults.add(grant);
+  for (const deny of denies) defaults.delete(deny);
+  if (defaults.has("jobs.operateOthers")) defaults.add("jobs.viewAll");
+  return state.permissionCatalog.filter((item) => defaults.has(item));
+}
+
+function computeOverrides(role, checked) {
+  const defaults = new Set(state.roleDefaults[role] || []);
+  const grants = [];
+  const denies = [];
+  for (const permission of state.permissionCatalog) {
+    const on = checked.has(permission);
+    if (on && !defaults.has(permission)) grants.push(permission);
+    if (!on && defaults.has(permission)) denies.push(permission);
+  }
+  return { grants, denies };
+}
+
+function renderUserList() {
+  const list = $("#userList");
+  if (!list) return;
+  if (!state.users.length) {
+    list.innerHTML = `<p class="empty">${escapeHtml(t("users.empty"))}</p>`;
+    return;
+  }
+
+  list.innerHTML = state.users
+    .map((user) => {
+      const active = user.id === state.editingUserId ? " active" : "";
+      const disabled = user.disabled ? ` · ${escapeHtml(t("users.disabled"))}` : "";
+      return `
+        <button type="button" class="user-item${active}" data-user-id="${escapeHtml(user.id)}">
+          <strong>${escapeHtml(user.username)}</strong>
+          <span class="meta">${escapeHtml(roleLabel(user.role))}${disabled}</span>
+        </button>
+      `;
+    })
+    .join("");
+}
+
+function selectedUserPermissions() {
+  const checked = new Set(
+    [...document.querySelectorAll("#userPermissionList input[type=checkbox]:checked")].map((item) => item.value),
+  );
+  return checked;
+}
+
+function renderUserPermissionList(checked) {
+  const root = $("#userPermissionList");
+  if (!root) return;
+  root.innerHTML = state.permissionCatalog
+    .map((permission) => {
+      const on = checked.has(permission) ? " checked" : "";
+      return `
+        <label class="inline-toggle">
+          <input type="checkbox" value="${escapeHtml(permission)}"${on} />
+          <span>${escapeHtml(t(`users.perm.${permission}`))}</span>
+        </label>
+      `;
+    })
+    .join("");
+}
+
+function renderUserProjectList(allowedIds) {
+  const root = $("#userProjectList");
+  if (!root) return;
+  if (!state.projects.length) {
+    root.innerHTML = `<p class="hint">${escapeHtml(t("users.noProjects"))}</p>`;
+    return;
+  }
+  const allowed = new Set(allowedIds || []);
+  root.innerHTML = state.projects
+    .map((project) => {
+      const on = allowed.has(project.id) ? " checked" : "";
+      return `
+        <label class="inline-toggle">
+          <input type="checkbox" value="${escapeHtml(project.id)}"${on} />
+          <span>${escapeHtml(project.name)}</span>
+        </label>
+      `;
+    })
+    .join("");
+}
+
+function resetUserEditForm() {
+  state.editingUserId = "";
+  const form = $("#userEditForm");
+  if (!form) return;
+  form.reset();
+  form.userId.value = "";
+  form.username.disabled = false;
+  $("#userEditTitle").textContent = t("users.create");
+  $("#userPasswordField")?.classList.remove("hidden");
+  $("#userDisabledField")?.classList.add("hidden");
+  $("#userResetPasswordButton")?.classList.add("hidden");
+  renderUserPermissionList(new Set(effectivePermissions(form.role.value)));
+  renderUserProjectList([]);
+  renderUserList();
+}
+
+function fillUserEditForm(user) {
+  const form = $("#userEditForm");
+  if (!form || !user) return;
+  state.editingUserId = user.id;
+  form.userId.value = user.id;
+  form.username.value = user.username;
+  form.username.disabled = true;
+  form.role.value = user.role;
+  form.password.value = "";
+  form.disabled.checked = Boolean(user.disabled);
+  $("#userEditTitle").textContent = t("users.edit");
+  $("#userPasswordField")?.classList.add("hidden");
+  $("#userDisabledField")?.classList.remove("hidden");
+  $("#userResetPasswordButton")?.classList.remove("hidden");
+  renderUserPermissionList(new Set(user.permissions || effectivePermissions(user.role, user.grants, user.denies)));
+  renderUserProjectList(user.allowedProjectIds || []);
+  renderUserList();
+}
+
+function renderUserEditForm() {
+  const form = $("#userEditForm");
+  if (!form) return;
+  if (state.editingUserId) {
+    const user = state.users.find((item) => item.id === state.editingUserId);
+    if (user) {
+      fillUserEditForm(user);
+      return;
+    }
+  }
+  resetUserEditForm();
+}
+
+async function loadUserAdminData() {
+  const [catalog, users] = await Promise.all([api("/api/permissions"), api("/api/users")]);
+  state.permissionCatalog = catalog.permissions || [];
+  state.roleDefaults = catalog.roleDefaults || {};
+  state.users = users.users || [];
+  renderUserList();
+  renderUserEditForm();
+}
+
+async function openUsersSheet() {
+  if (!hasPerm("users.manage")) return;
+  closeSheet("settingsSheet");
+  openSheet("usersSheet");
+  try {
+    await loadUserAdminData();
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
 function openNewTaskSheet() {
+  if (!hasPerm("jobs.create")) {
+    showToast(t("api.forbidden"));
+    return;
+  }
   ensureSelectedProject();
   updateNewTaskProjectLabel();
   setModeSelect($("#modeSelect"), loadSavedMode());
@@ -2258,6 +2510,7 @@ async function submitNewJob() {
 async function bootstrap() {
   if (window.__crcSession?.csrfToken) {
     state.csrfToken = window.__crcSession.csrfToken;
+    applyAuthFromSession(window.__crcSession);
     setLoggedIn(true);
     await refreshData();
     return;
@@ -2266,6 +2519,7 @@ async function bootstrap() {
   try {
     const session = await api("/api/session");
     state.csrfToken = session.csrfToken;
+    applyAuthFromSession(session);
     applySessionAgentDefaults(session);
     setLoggedIn(true);
     await refreshData();
@@ -2280,10 +2534,14 @@ export async function onBootAuthenticated(session) {
     throw new Error("缺少会话令牌，无法加载项目与历史");
   }
 
+  applyAuthFromSession(session);
   window.__crcSession = {
     csrfToken: state.csrfToken,
     sessionToken: session.sessionToken,
-    username: session.username || "admin",
+    username: session.username || "",
+    role: session.role,
+    permissions: session.permissions,
+    allowedProjectIds: session.allowedProjectIds,
   };
   try {
     localStorage.setItem("crc_session_token", session.sessionToken);
@@ -2494,7 +2752,106 @@ on("#newTaskChangeProjectButton", "click", () => {
   switchTab("projects");
 });
 
-on("#settingsButton", "click", () => openSheet("settingsSheet"));
+on("#settingsButton", "click", () => {
+  applyAuthUi();
+  openSheet("settingsSheet");
+});
+
+on("#usersManageButton", "click", () => {
+  openUsersSheet().catch((error) => showToast(error.message));
+});
+
+on("#userEditResetButton", "click", () => resetUserEditForm());
+
+on("#userResetPasswordButton", "click", async () => {
+  const userId = $("#userEditForm")?.userId?.value;
+  if (!userId) return;
+  try {
+    const result = await api(`/api/users/${userId}/password`, {
+      method: "POST",
+      body: "{}",
+    });
+    showToast(result.password ? t("users.generatedPassword", { password: result.password }) : t("users.saved"));
+  } catch (error) {
+    showToast(error.message);
+  }
+});
+
+on("#userList", "click", (event) => {
+  const item = event.target.closest("[data-user-id]");
+  if (!item) return;
+  const user = state.users.find((entry) => entry.id === item.dataset.userId);
+  if (user) fillUserEditForm(user);
+});
+
+on("#userEditForm", "change", (event) => {
+  if (event.target?.name !== "role") return;
+  const form = event.currentTarget;
+  const user = state.users.find((entry) => entry.id === form.userId.value);
+  if (user && user.role === form.role.value) {
+    renderUserPermissionList(new Set(user.permissions || []));
+    return;
+  }
+  renderUserPermissionList(new Set(effectivePermissions(form.role.value)));
+});
+
+on("#userEditForm", "submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const role = form.role.value;
+  const { grants, denies } = computeOverrides(role, selectedUserPermissions());
+  const allowedProjectIds = [...document.querySelectorAll("#userProjectList input[type=checkbox]:checked")].map(
+    (item) => item.value,
+  );
+  const payload = {
+    role,
+    grants,
+    denies,
+    allowedProjectIds,
+  };
+
+  try {
+    if (form.userId.value) {
+      payload.disabled = Boolean(form.disabled.checked);
+      await api(`/api/users/${form.userId.value}`, {
+        method: "PATCH",
+        body: JSON.stringify(payload),
+      });
+      showToast(t("users.saved"));
+    } else {
+      const created = await api("/api/users", {
+        method: "POST",
+        body: JSON.stringify({
+          username: form.username.value.trim(),
+          password: form.password.value,
+          ...payload,
+        }),
+      });
+      showToast(created.password ? t("users.generatedPassword", { password: created.password }) : t("users.saved"));
+    }
+    await loadUserAdminData();
+    resetUserEditForm();
+  } catch (error) {
+    showToast(error.message);
+  }
+});
+
+on("#changePasswordForm", "submit", async (event) => {
+  event.preventDefault();
+  const form = event.currentTarget;
+  const currentPassword = form.currentPassword.value;
+  const newPassword = form.newPassword.value;
+  try {
+    await api("/api/me/password", {
+      method: "POST",
+      body: JSON.stringify({ currentPassword, newPassword }),
+    });
+    form.reset();
+    showToast(t("settings.passwordChanged"));
+  } catch (error) {
+    showToast(error.message);
+  }
+});
 
 document.addEventListener("click", (event) => {
   const closeTarget = event.target.closest("[data-sheet-close]");

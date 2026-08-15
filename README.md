@@ -12,7 +12,8 @@
 
 ## 功能
 
-- 管理员账号密码登录，默认用户名为 `admin`。
+- 多用户登录：管理员、操作员、观察者，可按人覆盖权限并分配已确认项目。
+- 默认管理员用户名为 `admin`，由 `pnpm init-admin` 写入 SQLite。
 - 默认监听端口 `20267`。
 - 支持在 `PROJECT_ROOTS` 范围内按目录浏览并确认项目；下拉列表只显示已确认过的项目。
 - 通过 Cursor SDK 的本地模式在项目目录中执行 Agent 任务。
@@ -41,7 +42,7 @@ Copy-Item .env.example .env
 pnpm init-admin
 ```
 
-`pnpm init-admin` 会生成高强度随机密码，并写入 `.env` 中的密码哈希和 Session 密钥。密码只显示一次，请立即保存。
+`pnpm init-admin` 会生成高强度随机密码，写入 SQLite 中的管理员账号，并更新 `.env` 里的 Session 密钥。密码只显示一次，请立即保存。之后用设置里的「用户管理」添加其他账号，不要共享同一个管理员密码。
 
 然后编辑 `.env`：
 
@@ -115,7 +116,7 @@ http://127.0.0.1:20267
 
 1. 停止并移除正在运行的 compose 服务（例如 `docker compose down`）。
 2. 确认 `.env` 里 `PROJECT_ROOTS` 已是 Windows 路径（如 `E:\code;D:\code;C:\code`），不要再使用容器内的 `/workspace/...`。
-3. `DATA_DIR` 保持 `./data`，可继续使用已有 `data/` 下的任务与会话文件。
+3. `DATA_DIR` 保持 `./data`。首次启动会把已有 `jobs.json` / `selected-projects.json` 导入 `data/app.db`，原 JSON 留作备份。
 4. 执行 `pnpm install`（如尚未安装依赖），再 `pnpm build && pnpm start` 或 `pnpm dev`。
 
 ## 安装到手机
@@ -140,7 +141,8 @@ PWA 安装依赖：
 
 ## 安全注意事项
 
-- 不要把 `.env`、`data/` 下的运行时数据（如 `jobs.json`、`selected-projects.json`）或管理员密码提交到 Git。
+- 不要把 `.env`、`data/` 下的运行时数据（如 `app.db`、旧的 `jobs.json`）或管理员密码提交到 Git。
 - 公网访问必须使用 HTTPS，并把 `COOKIE_SECURE` 设置为 `true`。
 - `PROJECT_ROOTS` 不要设置为整个系统盘，建议设置为 `E:\code;D:\code;C:\code` 这类项目根目录列表。
-- 控制台只适合个人使用，不建议给多人共享管理员账号。
+- 按权限共享控制台，不要把同一个管理员密码发给多人。同一项目上多人同时跑 Agent 可能互相改文件。
+- 不做自助注册；只有具备「管理用户」权限的人能创建账号。

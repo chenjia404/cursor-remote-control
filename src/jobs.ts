@@ -4,6 +4,7 @@ import crypto from "node:crypto";
 import type { ToolName } from "@cursor/sdk";
 import type { ExtraProjectRef } from "./agentOptions.js";
 import { config } from "./config.js";
+import { getDb, withTransaction } from "./db.js";
 import type { JobImageMeta } from "./jobImages.js";
 import { formatModelSelection, type AgentModelSelection } from "./models.js";
 import type { ProjectInfo } from "./projects.js";
@@ -107,10 +108,13 @@ export type JobSummary = {
   autoReview?: boolean;
   usage?: JobTokenUsage;
   activeTurnId?: string;
+  submittedBy: string;
   turns: JobTurnSummary[];
 };
 
 const jobs = new Map<string, JobRecord>();
+const dirtyJobIds = new Set<string>();
+const deletedJobIds = new Set<string>();
 let loaded = false;
 let writeChain = Promise.resolve();
 let persistTimer: ReturnType<typeof setTimeout> | null = null;
@@ -188,10 +192,66 @@ function describeRunSettings(mode: AgentMode, model?: AgentModelSelection): stri
   return modelText ? `${modeText} 模式，${modelText}` : `${modeText} 模式`;
 }
 
-async function persist(): Promise<void> {
-  await fs.mkdir(config.dataDir, { recursive: true });
-  const records = [...jobs.values()].sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-  await fs.writeFile(jobsFile(), JSON.stringify(records), "utf8");
+function markJobDirty(jobId: string): void {
+  dirtyJobIds.add(jobId);
+}
+
+function markJobDeleted(jobId: string): void {
+  deletedJobIds.add(jobId);
+  dirtyJobIds.delete(jobId);
+}
+
+function jobRowValues(job: JobRecord) {
+  return [
+    job.id,
+    job.submittedBy,
+    job.status,
+    job.project.id,
+    job.project.name,
+    job.project.path,
+    job.createdAt,
+    job.updatedAt,
+    job.parentJobId ?? null,
+    JSON.stringify(job),
+  ];
+}
+
+function persist(): void {
+  if (dirtyJobIds.size === 0 && deletedJobIds.size === 0) return;
+
+  const upsert = getDb().prepare(
+    `INSERT INTO jobs (
+       id, submitted_by, status, project_id, project_name, project_path,
+       created_at, updated_at, parent_job_id, record_json
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       submitted_by = excluded.submitted_by,
+       status = excluded.status,
+       project_id = excluded.project_id,
+       project_name = excluded.project_name,
+       project_path = excluded.project_path,
+       created_at = excluded.created_at,
+       updated_at = excluded.updated_at,
+       parent_job_id = excluded.parent_job_id,
+       record_json = excluded.record_json`,
+  );
+  const remove = getDb().prepare("DELETE FROM jobs WHERE id = ?");
+
+  withTransaction(() => {
+    for (const id of deletedJobIds) {
+      remove.run(id);
+    }
+    for (const id of dirtyJobIds) {
+      const job = jobs.get(id);
+      if (!job) {
+        remove.run(id);
+        continue;
+      }
+      upsert.run(...jobRowValues(job));
+    }
+    deletedJobIds.clear();
+    dirtyJobIds.clear();
+  });
 }
 
 function enqueuePersist(): void {
@@ -250,6 +310,7 @@ function toJobSummary(job: JobRecord): JobSummary {
     autoReview: job.autoReview,
     usage: job.usage,
     activeTurnId: job.activeTurnId,
+    submittedBy: job.submittedBy,
     turns: (job.turns ?? []).map((turn) => ({
       id: turn.id,
       status: turn.status,
@@ -354,6 +415,8 @@ function migrateConversationChains(): boolean {
     }
     syncJobStatusFromTurns(root);
     root.updatedAt = [root.updatedAt, child.updatedAt].sort().at(-1) || now();
+    markJobDirty(root.id);
+    markJobDeleted(child.id);
     jobs.delete(child.id);
     changed = true;
   }
@@ -361,17 +424,56 @@ function migrateConversationChains(): boolean {
   return changed;
 }
 
+function importJobsFromJson(records: JobRecord[]): void {
+  const upsert = getDb().prepare(
+    `INSERT INTO jobs (
+       id, submitted_by, status, project_id, project_name, project_path,
+       created_at, updated_at, parent_job_id, record_json
+     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET
+       submitted_by = excluded.submitted_by,
+       status = excluded.status,
+       project_id = excluded.project_id,
+       project_name = excluded.project_name,
+       project_path = excluded.project_path,
+       created_at = excluded.created_at,
+       updated_at = excluded.updated_at,
+       parent_job_id = excluded.parent_job_id,
+       record_json = excluded.record_json`,
+  );
+  withTransaction(() => {
+    for (const record of records) {
+      upsert.run(...jobRowValues(record));
+    }
+  });
+}
+
 export async function loadJobs(): Promise<void> {
   if (loaded) return;
   loaded = true;
 
-  try {
-    const text = await fs.readFile(jobsFile(), "utf8");
-    const records = JSON.parse(text) as JobRecord[];
-    for (const record of records) jobs.set(record.id, record);
-  } catch (error) {
-    const code = (error as NodeJS.ErrnoException).code;
-    if (code !== "ENOENT") throw error;
+  const rows = getDb().prepare("SELECT record_json FROM jobs").all() as Array<{ record_json: string }>;
+  if (rows.length > 0) {
+    for (const row of rows) {
+      try {
+        const record = JSON.parse(row.record_json) as JobRecord;
+        if (record?.id) jobs.set(record.id, record);
+      } catch (error) {
+        console.error("读取任务记录失败", error);
+      }
+    }
+  } else {
+    try {
+      const text = await fs.readFile(jobsFile(), "utf8");
+      const records = JSON.parse(text) as JobRecord[];
+      if (Array.isArray(records) && records.length > 0) {
+        for (const record of records) jobs.set(record.id, record);
+        importJobsFromJson(records);
+      }
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code;
+      if (code !== "ENOENT") throw error;
+    }
   }
 
   if (migrateConversationChains()) {
@@ -419,6 +521,7 @@ export function cancelQueuedTurns(jobId: string): JobTurn[] {
     appendJobLog(job.id, "info", "已取消排队中的后续指令。");
     syncJobStatusFromTurns(job);
     job.updatedAt = now();
+    markJobDirty(job.id);
     schedulePersist(true);
   }
 
@@ -432,7 +535,7 @@ export function listQueuedJobIds(): string[] {
 }
 
 /**
- * 进程内存里的 activeRuns 会在重启后丢失，但 jobs.json 里的 running 会原样保留。
+ * 进程内存里的 activeRuns 会在重启后丢失，但库里的 running 会原样保留。
  * 启动时把这类孤儿任务标为 error；queued 的后续指令会在启动后继续调度。
  */
 export function recoverInterruptedJobs(): number {
@@ -570,9 +673,10 @@ export function enqueueJobTurn(
   return { job, turn };
 }
 
-export function listJobs(): JobSummary[] {
+export function listJobs(filter?: { submittedBy?: string }): JobSummary[] {
   return [...jobs.values()]
     .filter((job) => !job.parentJobId)
+    .filter((job) => !filter?.submittedBy || job.submittedBy === filter.submittedBy)
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
     .map(toJobSummary);
 }
@@ -587,6 +691,7 @@ export function updateJob(id: string, patch: Partial<JobRecord>): JobRecord {
 
   Object.assign(job, patch, { updatedAt: now() });
   jobs.set(job.id, job);
+  markJobDirty(job.id);
   schedulePersist(true);
   return job;
 }
@@ -603,6 +708,7 @@ export function updateTurn(jobId: string, turnId: string, patch: Partial<JobTurn
   if (patch.model) job.model = patch.model;
   syncJobStatusFromTurns(job);
   job.updatedAt = now();
+  markJobDirty(job.id);
   schedulePersist(true);
   return turn;
 }
@@ -659,5 +765,6 @@ export function appendJobLog(
     job.logs.splice(0, job.logs.length - MAX_LOG_ENTRIES);
   }
   job.updatedAt = now();
+  markJobDirty(job.id);
   schedulePersist();
 }

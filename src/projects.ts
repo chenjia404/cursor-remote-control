@@ -1,6 +1,8 @@
 import fs from "node:fs/promises";
 import path from "node:path";
 import { config } from "./config.js";
+import { getDb, withTransaction } from "./db.js";
+import { removeProjectFromAllUsers } from "./users.js";
 
 const PROJECT_MARKERS = [".git", "package.json", "pnpm-workspace.yaml", "pyproject.toml", "go.mod", "Cargo.toml"];
 const SKIP_DIRS = new Set([".git", "node_modules", "dist", "build", ".next", ".venv", "vendor"]);
@@ -37,7 +39,6 @@ type SelectedProjectStore = {
 
 let selectedPaths = new Set<string>();
 let selectedLoaded = false;
-let selectedWriteChain = Promise.resolve();
 
 function normalizePath(value: string): string {
   return path.resolve(value);
@@ -82,34 +83,47 @@ function selectedProjectsFile(): string {
   return path.join(config.dataDir, "selected-projects.json");
 }
 
-async function persistSelectedProjects(): Promise<void> {
-  await fs.mkdir(config.dataDir, { recursive: true });
-  const payload: SelectedProjectStore = {
-    paths: [...selectedPaths].sort((a, b) => a.localeCompare(b, "zh-Hans-CN")),
-  };
-  await fs.writeFile(selectedProjectsFile(), JSON.stringify(payload, null, 2), "utf8");
+function persistSelectedProjects(): void {
+  const insert = getDb().prepare(
+    "INSERT INTO selected_projects (path, selected_at) VALUES (?, ?) ON CONFLICT(path) DO UPDATE SET selected_at = excluded.selected_at",
+  );
+  const selectedAt = new Date().toISOString();
+  withTransaction(() => {
+    getDb().prepare("DELETE FROM selected_projects").run();
+    for (const projectPath of selectedPaths) {
+      insert.run(projectPath, selectedAt);
+    }
+  });
 }
 
-function schedulePersistSelectedProjects(): void {
-  selectedWriteChain = selectedWriteChain.then(persistSelectedProjects).catch((error) => {
-    console.error("保存已选项目失败", error);
-  });
+function importSelectedProjects(paths: string[]): void {
+  selectedPaths = new Set(
+    paths
+      .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
+      .map((item) => normalizePath(item))
+      .filter((item) => config.projectRoots.some((root) => isWithinRoot(item, root))),
+  );
+  persistSelectedProjects();
 }
 
 export async function loadSelectedProjects(): Promise<void> {
   if (selectedLoaded) return;
   selectedLoaded = true;
 
+  const rows = getDb().prepare("SELECT path FROM selected_projects").all() as Array<{ path: string }>;
+  if (rows.length > 0) {
+    selectedPaths = new Set(
+      rows
+        .map((row) => normalizePath(row.path))
+        .filter((item) => config.projectRoots.some((root) => isWithinRoot(item, root))),
+    );
+    return;
+  }
+
   try {
     const text = await fs.readFile(selectedProjectsFile(), "utf8");
     const data = JSON.parse(text) as SelectedProjectStore;
-    const paths = Array.isArray(data.paths) ? data.paths : [];
-    selectedPaths = new Set(
-      paths
-        .filter((item): item is string => typeof item === "string" && item.trim().length > 0)
-        .map((item) => normalizePath(item))
-        .filter((item) => config.projectRoots.some((root) => isWithinRoot(item, root))),
-    );
+    importSelectedProjects(Array.isArray(data.paths) ? data.paths : []);
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
     if (code !== "ENOENT") throw error;
@@ -173,8 +187,11 @@ export async function listSelectedProjects(): Promise<ProjectInfo[]> {
   }
 
   if (stalePaths.length > 0) {
-    for (const stale of stalePaths) selectedPaths.delete(stale);
-    schedulePersistSelectedProjects();
+    for (const stale of stalePaths) {
+      selectedPaths.delete(stale);
+      removeProjectFromAllUsers(projectIdFromPath(stale));
+    }
+    persistSelectedProjects();
   }
 
   return projects.sort((a, b) => {
@@ -189,7 +206,7 @@ export async function selectProject(projectPath: string): Promise<ProjectInfo> {
   await loadSelectedProjects();
   const project = await buildProjectInfo(projectPath);
   selectedPaths.add(project.path);
-  schedulePersistSelectedProjects();
+  persistSelectedProjects();
   return {
     ...project,
     selectedAt: new Date().toISOString(),
@@ -206,7 +223,8 @@ export async function unselectProject(projectId: string): Promise<void> {
   await loadSelectedProjects();
   const projectPath = assertPathAllowed(pathFromProjectId(projectId));
   selectedPaths.delete(projectPath);
-  schedulePersistSelectedProjects();
+  persistSelectedProjects();
+  removeProjectFromAllUsers(projectId);
 }
 
 export async function getProjectById(projectId: string): Promise<ProjectInfo> {

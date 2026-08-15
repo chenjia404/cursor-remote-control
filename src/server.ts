@@ -11,16 +11,39 @@ import {
   resolveRunOptions,
   sanitizeToolNames,
 } from "./agentOptions.js";
+import { userCanOperateJob, userCanUseProject, userCanViewJob } from "./access.js";
 import {
   clearSession,
+  deleteUserSessions,
   getRawSessionToken,
   issueSession,
   loadActiveSession,
   requireAuth,
   requireCsrf,
-  verifyPassword,
+  requirePermission,
+  toAuthenticatedUser,
+  type AuthenticatedUser,
 } from "./auth.js";
 import { assertRequiredConfig, config } from "./config.js";
+import { initDatabase } from "./db.js";
+import { hasPermission, isRole, publicPermissionCatalog, sanitizePermissions } from "./permissions.js";
+import {
+  assertPasswordStrength,
+  generatePasswordHash,
+  generateRandomPassword,
+  verifyPassword,
+} from "./passwords.js";
+import {
+  addUserProject,
+  assertHasActiveAdmin,
+  bootstrapAdminFromEnv,
+  createUser,
+  getUserById,
+  getUserByUsername,
+  listUsers,
+  toPublicUser,
+  updateUser,
+} from "./users.js";
 import {
   cancelCursorJob,
   interruptRunningTurn,
@@ -104,6 +127,32 @@ const selectProjectSchema = z.object({
   path: z.string().min(1),
 });
 
+const createUserSchema = z.object({
+  username: z.string().min(2).max(32),
+  password: z.string().optional(),
+  role: z.enum(["admin", "operator", "viewer"]),
+  grants: z.array(z.string()).optional(),
+  denies: z.array(z.string()).optional(),
+  allowedProjectIds: z.array(z.string()).optional(),
+});
+
+const patchUserSchema = z.object({
+  role: z.enum(["admin", "operator", "viewer"]).optional(),
+  grants: z.array(z.string()).optional(),
+  denies: z.array(z.string()).optional(),
+  allowedProjectIds: z.array(z.string()).optional(),
+  disabled: z.boolean().optional(),
+});
+
+const adminPasswordSchema = z.object({
+  password: z.string().optional(),
+});
+
+const selfPasswordSchema = z.object({
+  currentPassword: z.string().min(1),
+  newPassword: z.string().min(1),
+});
+
 function getRequestIp(requestIp: string | undefined): string {
   return requestIp || "unknown";
 }
@@ -117,8 +166,24 @@ function requirePromptOrImages(prompt: string, images: unknown): string {
   return text || "（附图）";
 }
 
+function sessionFields(user: AuthenticatedUser) {
+  return {
+    username: user.username,
+    role: user.role,
+    permissions: user.permissions,
+    allowedProjectIds: user.allowedProjectIds,
+  };
+}
+
+function sendForbidden(reply: { code: (status: number) => { send: (payload: { error: string }) => unknown } }, message = "没有权限") {
+  reply.code(403).send({ error: message });
+}
+
 async function start(): Promise<void> {
   assertRequiredConfig();
+  initDatabase();
+  bootstrapAdminFromEnv();
+  assertHasActiveAdmin();
   await Promise.all([loadJobs(), loadSelectedProjects(), loadActiveSession()]);
   const recoveredCount = recoverInterruptedJobs();
   if (recoveredCount > 0) {
@@ -190,19 +255,16 @@ async function start(): Promise<void> {
 
   app.post("/api/login", { config: { rateLimit: { max: 10, timeWindow: "1 minute" } } }, async (request, reply) => {
     const body = loginSchema.parse(request.body);
-    if (body.username !== config.adminUsername || !config.adminPasswordHash) {
+    const user = getUserByUsername(body.username);
+    if (!user || user.disabled || !verifyPassword(body.password, user.passwordHash)) {
       reply.code(401).send({ error: "用户名或密码错误" });
       return;
     }
 
-    if (!verifyPassword(body.password, config.adminPasswordHash)) {
-      reply.code(401).send({ error: "用户名或密码错误" });
-      return;
-    }
-
-    const issued = await issueSession(reply, body.username, request);
+    const issued = await issueSession(reply, user, request);
+    const authUser = toAuthenticatedUser(user);
     return {
-      username: body.username,
+      ...sessionFields(authUser),
       csrfToken: issued.csrfToken,
       sessionToken: issued.sessionToken,
       agentOptions: publicAgentOptionDefaults(),
@@ -215,16 +277,21 @@ async function start(): Promise<void> {
   });
 
   app.get("/api/session", { preHandler: requireAuth }, async (request) => ({
-    username: request.user?.username,
+    ...sessionFields(request.user!),
     csrfToken: request.csrfToken,
     sessionToken: getRawSessionToken(request),
     version: config.appVersion,
     agentOptions: publicAgentOptionDefaults(),
   }));
 
-  app.get("/api/projects", { preHandler: requireAuth }, async () => ({
-    projects: await listSelectedProjects(),
-  }));
+  app.get("/api/permissions", { preHandler: requireAuth }, async () => publicPermissionCatalog());
+
+  app.get("/api/projects", { preHandler: requireAuth }, async (request) => {
+    const projects = await listSelectedProjects();
+    return {
+      projects: projects.filter((project) => userCanUseProject(request.user, project.id)),
+    };
+  });
 
   app.get("/api/models", { preHandler: requireAuth }, async () => {
     const models = await listCursorModels();
@@ -234,7 +301,7 @@ async function start(): Promise<void> {
     };
   });
 
-  app.get("/api/projects/browse", { preHandler: requireAuth }, async (request, reply) => {
+  app.get("/api/projects/browse", { preHandler: [requireAuth, requirePermission("projects.browse")] }, async (request, reply) => {
     const query = browseSchema.parse(request.query);
     try {
       return await browseDirectory(query.path);
@@ -244,10 +311,11 @@ async function start(): Promise<void> {
     }
   });
 
-  app.post("/api/projects/select", { preHandler: requireCsrf }, async (request, reply) => {
+  app.post("/api/projects/select", { preHandler: [requireCsrf, requirePermission("projects.select")] }, async (request, reply) => {
     const body = selectProjectSchema.parse(request.body);
     try {
       const project = await selectProject(body.path);
+      if (request.user) addUserProject(request.user.id, project.id);
       return { project };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
@@ -255,7 +323,7 @@ async function start(): Promise<void> {
     }
   });
 
-  app.delete("/api/projects/:id", { preHandler: requireCsrf }, async (request, reply) => {
+  app.delete("/api/projects/:id", { preHandler: [requireCsrf, requirePermission("projects.select")] }, async (request, reply) => {
     const params = z.object({ id: z.string().min(1) }).parse(request.params);
     try {
       await unselectProject(params.id);
@@ -266,8 +334,10 @@ async function start(): Promise<void> {
     }
   });
 
-  app.get("/api/jobs", { preHandler: requireAuth }, async () => ({
-    jobs: listJobs(),
+  app.get("/api/jobs", { preHandler: requireAuth }, async (request) => ({
+    jobs: listJobs(
+      hasPermission(request.user?.permissions, "jobs.viewAll") ? undefined : { submittedBy: request.user?.username },
+    ),
   }));
 
   app.get("/api/jobs/:id", { preHandler: requireAuth }, async (request, reply) => {
@@ -275,6 +345,10 @@ async function start(): Promise<void> {
     const job = getJob(params.id);
     if (!job) {
       reply.code(404).send({ error: "任务不存在" });
+      return;
+    }
+    if (!userCanViewJob(request.user, job.submittedBy)) {
+      sendForbidden(reply);
       return;
     }
 
@@ -307,6 +381,10 @@ async function start(): Promise<void> {
         reply.code(404).send({ error: "任务不存在" });
         return;
       }
+      if (!userCanOperateJob(request.user, parent.submittedBy, "jobs.followUp")) {
+        sendForbidden(reply);
+        return;
+      }
 
       let images;
       try {
@@ -331,9 +409,18 @@ async function start(): Promise<void> {
       return;
     }
 
+    if (!hasPermission(request.user?.permissions, "jobs.create")) {
+      sendForbidden(reply);
+      return;
+    }
+
     const project = await getProjectById(body.projectId);
     if (!(await isProjectSelected(body.projectId))) {
-      reply.code(400).send({ error: "请先在「按目录打开」中确认该项目" });
+      reply.code(400).send({ error: "请先在「浏览目录」中确认该项目" });
+      return;
+    }
+    if (!userCanUseProject(request.user, body.projectId)) {
+      sendForbidden(reply, "没有该项目的使用权限");
       return;
     }
 
@@ -342,6 +429,10 @@ async function start(): Promise<void> {
       extraProjects = await resolveExtraProjects(body.extraProjectIds, body.projectId);
     } catch (error) {
       reply.code(400).send({ error: error instanceof Error ? error.message : String(error) });
+      return;
+    }
+    if (extraProjects.some((item) => !userCanUseProject(request.user, item.id))) {
+      sendForbidden(reply, "没有该项目的使用权限");
       return;
     }
 
@@ -389,6 +480,10 @@ async function start(): Promise<void> {
     const existing = getJob(params.id);
     if (!existing) {
       reply.code(404).send({ error: "任务不存在" });
+      return;
+    }
+    if (!userCanOperateJob(request.user, existing.submittedBy, "jobs.followUp")) {
+      sendForbidden(reply);
       return;
     }
 
@@ -455,6 +550,10 @@ async function start(): Promise<void> {
       reply.code(404).send({ error: "任务不存在" });
       return;
     }
+    if (!userCanViewJob(request.user, job.submittedBy)) {
+      sendForbidden(reply);
+      return;
+    }
 
     const referenced = (job.turns ?? []).some((turn) => turn.images?.some((item) => item.id === params.imageId));
     if (!referenced) {
@@ -479,6 +578,10 @@ async function start(): Promise<void> {
       reply.code(404).send({ error: "任务不存在" });
       return;
     }
+    if (!userCanOperateJob(request.user, job.submittedBy, "jobs.cancel")) {
+      sendForbidden(reply);
+      return;
+    }
 
     try {
       const updatedJob = await cancelCursorJob(params.id);
@@ -487,6 +590,99 @@ async function start(): Promise<void> {
       const message = error instanceof Error ? error.message : String(error);
       reply.code(409).send({ error: message });
       return;
+    }
+  });
+
+  app.get("/api/users", { preHandler: [requireAuth, requirePermission("users.manage")] }, async () => ({
+    users: listUsers(),
+  }));
+
+  app.post("/api/users", { preHandler: [requireCsrf, requirePermission("users.manage")] }, async (request, reply) => {
+    const body = createUserSchema.parse(request.body);
+    if (!isRole(body.role)) {
+      reply.code(400).send({ error: "角色无效" });
+      return;
+    }
+
+    const password = body.password?.trim() ? body.password : generateRandomPassword();
+    try {
+      assertPasswordStrength(password);
+      const user = createUser({
+        username: body.username,
+        passwordHash: generatePasswordHash(password),
+        role: body.role,
+        grants: sanitizePermissions(body.grants),
+        denies: sanitizePermissions(body.denies),
+        allowedProjectIds: body.allowedProjectIds,
+      });
+      return {
+        user: toPublicUser(user),
+        password: body.password?.trim() ? undefined : password,
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      reply.code(400).send({ error: message });
+    }
+  });
+
+  app.patch("/api/users/:id", { preHandler: [requireCsrf, requirePermission("users.manage")] }, async (request, reply) => {
+    const params = z.object({ id: z.string().uuid() }).parse(request.params);
+    const body = patchUserSchema.parse(request.body);
+    try {
+      const user = updateUser(params.id, {
+        role: body.role,
+        grants: body.grants === undefined ? undefined : sanitizePermissions(body.grants),
+        denies: body.denies === undefined ? undefined : sanitizePermissions(body.denies),
+        allowedProjectIds: body.allowedProjectIds,
+        disabled: body.disabled,
+      });
+      if (body.disabled) deleteUserSessions(user.id);
+      return { user: toPublicUser(user) };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const code = message === "用户不存在" ? 404 : 400;
+      reply.code(code).send({ error: message });
+    }
+  });
+
+  app.post("/api/users/:id/password", { preHandler: [requireCsrf, requirePermission("users.manage")] }, async (request, reply) => {
+    const params = z.object({ id: z.string().uuid() }).parse(request.params);
+    const body = adminPasswordSchema.parse(request.body);
+    const password = body.password?.trim() ? body.password : generateRandomPassword();
+    try {
+      assertPasswordStrength(password);
+      const user = updateUser(params.id, { passwordHash: generatePasswordHash(password) });
+      deleteUserSessions(user.id);
+      return {
+        ok: true,
+        password: body.password?.trim() ? undefined : password,
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const code = message === "用户不存在" ? 404 : 400;
+      reply.code(code).send({ error: message });
+    }
+  });
+
+  app.post("/api/me/password", { preHandler: requireCsrf }, async (request, reply) => {
+    const body = selfPasswordSchema.parse(request.body);
+    const current = request.user ? getUserById(request.user.id) : undefined;
+    if (!current) {
+      reply.code(401).send({ error: "未登录" });
+      return;
+    }
+    if (!verifyPassword(body.currentPassword, current.passwordHash)) {
+      reply.code(400).send({ error: "当前密码不正确" });
+      return;
+    }
+    try {
+      assertPasswordStrength(body.newPassword);
+      updateUser(current.id, { passwordHash: generatePasswordHash(body.newPassword) });
+      deleteUserSessions(current.id, request.sessionId);
+      return { ok: true };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      reply.code(400).send({ error: message });
     }
   });
 
