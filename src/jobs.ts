@@ -72,6 +72,8 @@ export type JobRecord = {
   sourceIp: string;
   agentId?: string;
   runId?: string;
+  /** 进程异常退出后 SDK 可能仍留着未结束的 Run，下次 send 需要 force 清掉 */
+  staleAgentRun?: boolean;
   /** 旧数据：追加指令曾拆成子任务；加载时会合并进根任务 */
   parentJobId?: string;
   mode?: AgentMode;
@@ -687,6 +689,7 @@ export function listQueuedJobIds(): string[] {
 /**
  * 进程内存里的 activeRuns 会在重启后丢失，但库里的 running 会原样保留。
  * 启动时把这类孤儿任务标为 error；queued 的后续指令会在启动后继续调度。
+ * 同时记下 staleAgentRun，下次继续时用 SDK force 清掉崩溃留下的残留 Run。
  */
 export function recoverInterruptedJobs(): number {
   let count = 0;
@@ -704,7 +707,7 @@ export function recoverInterruptedJobs(): number {
     if (job.status === "running" || recovered) {
       appendJobLog(job.id, "error", "服务进程已重启，进行中的任务无法继续，已标记为中断。");
       syncJobStatusFromTurns(job);
-      updateJob(job.id, {});
+      updateJob(job.id, job.agentId ? { staleAgentRun: true } : {});
       count += 1;
     }
   }

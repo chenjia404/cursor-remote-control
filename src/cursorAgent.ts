@@ -1,5 +1,6 @@
 import {
   Agent,
+  AgentBusyError,
   CursorAgentError,
   UnsupportedRunOperationError,
   type AgentModeOption,
@@ -226,6 +227,65 @@ function runSettingsLabel(mode: AgentModeOption, modelLabel: string): string {
   return modelLabel ? `${modeText} 模式，${modelLabel}` : `${modeText} 模式`;
 }
 
+function isAgentBusyError(error: unknown): boolean {
+  if (error instanceof AgentBusyError) return true;
+  const message = error instanceof Error ? error.message : String(error);
+  return /already has active run/i.test(message);
+}
+
+function buildSendOptions(mode: AgentModeOption, model: ModelSelection, force: boolean): SendOptions {
+  return {
+    mode,
+    model,
+    ...(force ? { local: { force: true } } : {}),
+  };
+}
+
+function shouldForceStaleRun(job: JobRecord, turn: JobTurn): boolean {
+  return turn.delivery === "interrupt" || job.staleAgentRun === true;
+}
+
+function clearStaleAgentRun(jobId: string): void {
+  const job = getJob(jobId);
+  if (!job?.staleAgentRun) return;
+  delete job.staleAgentRun;
+  updateJob(jobId, {});
+}
+
+/** 进程崩溃后 SDK 会留下未结束的 Run；force 会先过期残留 Run 再发新一轮。 */
+async function sendTurnMessage(
+  job: JobRecord,
+  turn: JobTurn,
+  agent: DisposableAgent,
+  message: string | SDKUserMessage,
+  mode: AgentModeOption,
+  model: ModelSelection,
+): Promise<Run> {
+  const force = shouldForceStaleRun(job, turn);
+  if (job.staleAgentRun) {
+    appendJobLog(job.id, "info", "上次异常退出留下未结束的 Run，将先结束后继续。", turn.id);
+  }
+
+  try {
+    const run = await agent.send(message, buildSendOptions(mode, model, force));
+    clearStaleAgentRun(job.id);
+    return run;
+  } catch (error) {
+    if (force || !isAgentBusyError(error)) throw error;
+
+    appendJobLog(
+      job.id,
+      "info",
+      "检测到上次异常退出留下的残留 Run，正在强制结束后继续。",
+      turn.id,
+    );
+    updateJob(job.id, { staleAgentRun: true });
+    const run = await agent.send(message, buildSendOptions(mode, model, true));
+    clearStaleAgentRun(job.id);
+    return run;
+  }
+}
+
 async function createAgentForJob(job: JobRecord, turn: JobTurn): Promise<DisposableAgent> {
   const selection = await resolveModelSelection(turn.model ?? job.model);
   const model = toSdkModel(selection);
@@ -413,11 +473,7 @@ export async function runJobTurn(jobId: string, turnId: string): Promise<void> {
     const images = await loadJobImagesForSdk(job.id, turn.images);
     const prompt = turn.prompt.trim() || (images.length ? "请查看附图。" : "");
     const message: string | SDKUserMessage = images.length ? { text: prompt, images } : prompt;
-    const run = await agent.send(message, {
-      mode,
-      model: toSdkModel(selection),
-      ...(turn.delivery === "interrupt" ? { local: { force: true } } : {}),
-    });
+    const run = await sendTurnMessage(job, turn, agent, message, mode, toSdkModel(selection));
     activeRuns.set(job.id, run);
     updateJob(job.id, { runId: run.id });
     appendJobLog(job.id, "info", `Run 已启动：${run.id ?? "unknown"}`, turn.id);
