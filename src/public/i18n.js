@@ -96,7 +96,7 @@ const messages = {
     "submit.modelVariant": "预设",
     "submit.modelCustom": "自定义",
     "submit.prompt": "指令",
-    "submit.promptPlaceholder": "例如：检查这个项目的登录页面问题并修复，完成后运行相关检查。",
+    "submit.promptPlaceholder": "描述要做的任务…",
     "submit.button": "让 Cursor 修改",
     "submit.shellHint": "控制台不会提供任意 Shell，仅把任务提交给 Cursor Agent。",
 
@@ -109,7 +109,7 @@ const messages = {
     "session.newMessages": "↓ 新消息",
     "session.followUpOptions": "发送选项",
     "session.followUpMode": "模式",
-    "session.followUpPlaceholder": "继续安排这个任务…（Enter 发送，Shift+Enter 换行）",
+    "session.followUpPlaceholder": "添加后续指令",
     "session.followUpHint": "在同一任务中继续对话",
     "session.followUpHintBusy": "本轮进行中：默认排队发送，点「立即执行」会中断当前轮",
     "session.followUpHintNoAgent": "该任务没有可继续的会话",
@@ -427,7 +427,7 @@ const messages = {
     "submit.modelVariant": "Preset",
     "submit.modelCustom": "Custom",
     "submit.prompt": "Prompt",
-    "submit.promptPlaceholder": "Example: review the login page issues in this project, fix them, then run related checks.",
+    "submit.promptPlaceholder": "Describe the task…",
     "submit.button": "Ask Cursor to edit",
     "submit.shellHint": "This console does not offer an arbitrary shell. Tasks are submitted to the Cursor Agent only.",
 
@@ -440,7 +440,7 @@ const messages = {
     "session.newMessages": "↓ New messages",
     "session.followUpOptions": "Send options",
     "session.followUpMode": "Mode",
-    "session.followUpPlaceholder": "Continue this task… (Enter to send, Shift+Enter for a new line)",
+    "session.followUpPlaceholder": "Add a follow-up",
     "session.followUpHint": "Continue this task",
     "session.followUpHintBusy": "This round is running. Queue by default, or tap Run now to interrupt.",
     "session.followUpHintNoAgent": "This task has no resumable session",
@@ -813,6 +813,11 @@ export function applyDomI18n(root = document) {
   root.querySelectorAll("[data-i18n-aria]").forEach((el) => {
     const key = el.getAttribute("data-i18n-aria");
     if (key) el.setAttribute("aria-label", t(key));
+  });
+
+  root.querySelectorAll("[data-i18n-title]").forEach((el) => {
+    const key = el.getAttribute("data-i18n-title");
+    if (key) el.setAttribute("title", t(key));
   });
 
   document.documentElement.lang = localeTag();

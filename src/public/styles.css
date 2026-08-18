@@ -253,7 +253,7 @@ button.small {
 
 .app-shell.in-chat .follow-up-dock {
   bottom: 0;
-  padding-bottom: calc(0.45rem + var(--safe-bottom));
+  padding-bottom: calc(0.55rem + var(--safe-bottom));
 }
 
 .app-shell.in-chat .new-messages-fab {
@@ -836,52 +836,54 @@ button.small {
 /* Follow-up dock */
 
 .follow-up-dock {
-  background: rgba(15, 23, 42, 0.98);
-  border-top: 1px solid rgba(148, 163, 184, 0.15);
+  background: linear-gradient(180deg, transparent, rgba(15, 23, 42, 0.92) 28%);
   bottom: calc(var(--bottom-nav-h) + var(--safe-bottom));
   left: 0;
-  padding: 0.4rem 0.65rem 0.5rem;
+  overflow: visible;
+  padding: 0.55rem 0.75rem 0.6rem;
   position: fixed;
   right: 0;
   z-index: 25;
-  backdrop-filter: blur(10px);
 }
 
 .follow-up-composer {
+  position: relative;
   border: 1px solid #334155;
-  border-radius: 0.85rem;
-  background: #020617;
-  box-shadow: inset 0 0 0 1px rgba(56, 189, 248, 0.08);
+  border-radius: 1.35rem;
+  background: #0b1220;
+  box-shadow: 0 10px 28px rgba(2, 6, 23, 0.35);
   display: grid;
-  gap: 0.45rem;
-  padding: 0.55rem 0.65rem;
+  gap: 0.35rem;
+  padding: 0.7rem 0.75rem 0.55rem;
 }
 
-.follow-up-options {
+.composer-popover {
+  background: #0f172a;
   border: 1px solid #334155;
-  border-radius: 0.7rem;
-  padding: 0.35rem 0.55rem;
+  border-radius: 1rem;
+  bottom: calc(100% + 0.5rem);
+  box-shadow: 0 12px 32px rgba(2, 6, 23, 0.45);
+  display: grid;
+  gap: 0.55rem;
+  left: 0;
+  max-height: min(60vh, 28rem);
+  overflow: auto;
+  padding: 0.75rem;
+  position: absolute;
+  right: 0;
+  z-index: 30;
 }
 
-.follow-up-options > summary {
+.follow-up-status {
   color: #94a3b8;
-  cursor: pointer;
-  font-size: 0.78rem;
-  font-weight: 600;
-  list-style: none;
-  user-select: none;
+  font-size: 0.72rem;
+  line-height: 1.35;
+  margin: 0 0.15rem;
 }
 
-.follow-up-options > summary::-webkit-details-marker {
+.follow-up-status.is-ready,
+.follow-up-status:empty {
   display: none;
-}
-
-.follow-up-options-body {
-  display: grid;
-  gap: 0.45rem;
-  margin-top: 0.45rem;
-  padding-top: 0.45rem;
-  border-top: 1px solid #1e293b;
 }
 
 .follow-up-composer textarea {
@@ -889,8 +891,8 @@ button.small {
   border-radius: 0.7rem;
   background: transparent;
   margin: 0;
-  min-height: 2.25rem;
-  padding: 0.3rem 0.2rem;
+  min-height: 2.4rem;
+  padding: 0.15rem 0.35rem;
   resize: none;
 }
 
@@ -898,49 +900,125 @@ button.small {
   outline: none;
 }
 
-.follow-up-actions {
+.follow-up-toolbar {
   align-items: center;
   display: flex;
-  flex-wrap: wrap;
-  gap: 0.45rem;
+  gap: 0.4rem;
   justify-content: space-between;
+  min-width: 0;
 }
 
-.follow-up-actions .hint {
-  flex: 1;
-  font-size: 0.75rem;
+.follow-up-toolbar-start,
+.follow-up-toolbar-end {
+  align-items: center;
+  display: flex;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.follow-up-toolbar-start {
+  flex: 1 1 auto;
+}
+
+.follow-up-toolbar-end {
+  flex-shrink: 0;
+}
+
+.composer-icon-btn,
+.composer-send-btn {
+  align-items: center;
+  border-radius: 999px;
+  display: inline-flex;
+  flex-shrink: 0;
+  height: 2rem;
+  justify-content: center;
+  min-width: 2rem;
+  padding: 0;
+  width: 2rem;
+}
+
+.composer-icon-btn {
+  background: transparent;
+  border: 1px solid #475569;
+  color: #cbd5e1;
+}
+
+.composer-icon-btn:hover:not(:disabled) {
+  background: rgba(148, 163, 184, 0.12);
+  color: #f8fafc;
+}
+
+.composer-icon-btn svg,
+.composer-send-btn svg,
+.composer-chevron {
+  display: block;
+  height: 1.05rem;
+  width: 1.05rem;
+}
+
+.composer-model-btn {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 0.7rem;
+  color: #94a3b8;
+  display: inline-flex;
+  font-size: 0.82rem;
+  font-weight: 500;
+  gap: 0.2rem;
+  max-width: min(14rem, 46vw);
+  min-width: 0;
+  padding: 0.3rem 0.35rem;
+}
+
+.composer-model-btn:hover:not(:disabled) {
+  background: rgba(148, 163, 184, 0.1);
+  color: #e2e8f0;
+}
+
+.composer-model-btn[aria-expanded="true"] {
+  color: #e2e8f0;
+}
+
+.composer-model-btn[aria-expanded="true"] .composer-chevron {
+  transform: rotate(180deg);
+}
+
+.composer-model-label {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.follow-up-icon-btn {
+.composer-chevron {
   flex-shrink: 0;
-  min-width: 2rem;
-  padding: 0.4rem 0.55rem;
+  height: 0.7rem;
+  width: 0.7rem;
+}
+
+.composer-send-btn {
+  background: #38bdf8;
+  color: #082f49;
+}
+
+.composer-send-btn:hover:not(:disabled) {
+  background: #7dd3fc;
+}
+
+.composer-send-btn:disabled {
+  background: #1e293b;
+  color: #64748b;
+  opacity: 1;
 }
 
 .follow-up-previews:not(:empty) {
-  margin-top: -0.15rem;
+  padding: 0 0.2rem;
 }
 
-@media (max-width: 420px) {
-  .follow-up-actions .hint {
-    display: none;
-  }
-}
-
-.follow-up-actions button {
-  border-radius: 0.75rem;
-  min-width: 4.5rem;
-  padding: 0.55rem 0.9rem;
-}
-
-.follow-up-buttons {
-  display: flex;
-  flex-shrink: 0;
-  gap: 0.45rem;
+.follow-up-toolbar-end .ghost.small {
+  min-width: 0;
+  padding: 0.35rem 0.65rem;
 }
 
 .follow-up-settings {
@@ -961,6 +1039,19 @@ button.small {
   font-size: 0.9rem;
   margin-top: 0.25rem;
   padding: 0.55rem 0.65rem;
+}
+
+.new-task-composer textarea {
+  min-height: 5.5rem;
+}
+
+.new-task-composer .composer-popover {
+  bottom: auto;
+  top: calc(100% + 0.5rem);
+}
+
+.new-task-composer .composer-model-btn {
+  max-width: min(16rem, 58vw);
 }
 
 /* Sheets & overlays */

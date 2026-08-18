@@ -1,4 +1,4 @@
-const APP_VERSION = "0.4.7";
+const APP_VERSION = "0.4.9";
 const CACHE_NAME = `cursor-remote-control-v${APP_VERSION}`;
 const APP_SHELL = [
   "/",

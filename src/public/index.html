@@ -12,13 +12,13 @@
     <link rel="icon" href="/icons/icon-192.png" type="image/png" sizes="192x192" />
     <link rel="icon" href="/icons/icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" sizes="180x180" />
-    <link rel="stylesheet" href="/styles.css?v=0.4.7" />
+    <link rel="stylesheet" href="/styles.css?v=0.4.9" />
   </head>
   <body>
     <main class="shell">
       <section id="loginView" class="card login-card">
         <div class="login-brand">
-          <p class="eyebrow">Cursor Remote Control <span id="loginAppVersion" class="version">v0.4.7</span></p>
+          <p class="eyebrow">Cursor Remote Control <span id="loginAppVersion" class="version">v0.4.9</span></p>
           <h1 data-i18n="header.title">远程控制台</h1>
         </div>
         <h2 data-i18n="login.title">登录</h2>
@@ -187,68 +187,107 @@
 
         <div id="followUpDock" class="follow-up-dock hidden">
           <form id="followUpForm" class="follow-up-composer">
-            <details class="follow-up-options" id="followUpOptions">
-              <summary data-i18n="session.followUpOptions">发送选项</summary>
-              <div class="follow-up-options-body">
-                <div class="follow-up-settings">
-                  <label class="follow-up-mode">
-                    <span data-i18n="session.followUpMode">模式</span>
-                    <select id="followUpModeSelect">
-                      <option value="agent" data-i18n="submit.modeAgent">Agent（执行）</option>
-                      <option value="plan" data-i18n="submit.modePlan">Plan（规划）</option>
-                    </select>
-                  </label>
-                  <label class="follow-up-mode">
-                    <span data-i18n="submit.model">模型</span>
-                    <select id="followUpModelSelect"></select>
-                  </label>
-                </div>
-                <details class="model-advanced" id="followUpModelAdvanced">
-                  <summary data-i18n="submit.modelAdvanced">高级模型选项</summary>
-                  <div id="followUpModelParams" class="model-params compact"></div>
-                </details>
-                <details class="model-advanced" id="followUpAgentAdvanced">
-                  <summary data-i18n="submit.agentAdvanced">Agent 选项</summary>
-                  <label class="inline-toggle">
-                    <input id="followUpLoadLocalSettingsToggle" type="checkbox" checked />
-                    <span data-i18n="submit.loadLocalSettings">加载本机规则 / Skills / MCP</span>
-                  </label>
-                  <label class="inline-toggle">
-                    <input id="followUpSandboxToggle" type="checkbox" />
-                    <span data-i18n="submit.sandbox">启用沙箱</span>
-                  </label>
-                  <label class="inline-toggle">
-                    <input id="followUpAutoReviewToggle" type="checkbox" />
-                    <span data-i18n="submit.autoReview">启用 Auto-review</span>
-                  </label>
-                  <div>
-                    <span class="sheet-label" data-i18n="submit.disallowedTools">禁用工具</span>
-                    <div id="followUpDisallowedTools" class="chip-list"></div>
-                  </div>
-                </details>
+            <div id="followUpOptions" class="composer-popover hidden">
+              <div class="follow-up-settings">
+                <label class="follow-up-mode">
+                  <span data-i18n="session.followUpMode">模式</span>
+                  <select id="followUpModeSelect">
+                    <option value="agent" data-i18n="submit.modeAgent">Agent（执行）</option>
+                    <option value="plan" data-i18n="submit.modePlan">Plan（规划）</option>
+                  </select>
+                </label>
+                <label class="follow-up-mode">
+                  <span data-i18n="submit.model">模型</span>
+                  <select id="followUpModelSelect"></select>
+                </label>
               </div>
-            </details>
+              <details class="model-advanced" id="followUpModelAdvanced">
+                <summary data-i18n="submit.modelAdvanced">高级模型选项</summary>
+                <div id="followUpModelParams" class="model-params compact"></div>
+              </details>
+              <details class="model-advanced" id="followUpAgentAdvanced">
+                <summary data-i18n="submit.agentAdvanced">Agent 选项</summary>
+                <label class="inline-toggle">
+                  <input id="followUpLoadLocalSettingsToggle" type="checkbox" checked />
+                  <span data-i18n="submit.loadLocalSettings">加载本机规则 / Skills / MCP</span>
+                </label>
+                <label class="inline-toggle">
+                  <input id="followUpSandboxToggle" type="checkbox" />
+                  <span data-i18n="submit.sandbox">启用沙箱</span>
+                </label>
+                <label class="inline-toggle">
+                  <input id="followUpAutoReviewToggle" type="checkbox" />
+                  <span data-i18n="submit.autoReview">启用 Auto-review</span>
+                </label>
+                <div>
+                  <span class="sheet-label" data-i18n="submit.disallowedTools">禁用工具</span>
+                  <div id="followUpDisallowedTools" class="chip-list"></div>
+                </div>
+              </details>
+            </div>
+            <p id="followUpHint" class="follow-up-status hint" data-i18n="session.followUpHint">在同一任务中继续对话</p>
             <textarea
               id="followUpInput"
               rows="1"
               data-i18n-placeholder="session.followUpPlaceholder"
-              placeholder="继续安排这个任务…（Enter 发送，Shift+Enter 换行）"
+              data-i18n-title="session.followUpHintReady"
+              placeholder="添加后续指令"
+              title="Enter 发送，Shift+Enter 换行"
             ></textarea>
             <div id="followUpImagePreviews" class="image-previews follow-up-previews"></div>
-            <div class="follow-up-actions">
-              <input id="followUpImageInput" class="hidden" type="file" accept="image/jpeg,image/png,image/gif,image/webp,image/*" multiple />
-              <button id="followUpImageButton" type="button" class="ghost small follow-up-icon-btn" data-i18n="submit.attachImage" data-i18n-title="submit.attachImage" title="附加图片">📎</button>
-              <span id="followUpHint" class="hint" data-i18n="session.followUpHint">在同一任务中继续对话</span>
-              <div class="follow-up-buttons">
+            <div class="follow-up-toolbar">
+              <div class="follow-up-toolbar-start">
+                <input id="followUpImageInput" class="hidden" type="file" accept="image/jpeg,image/png,image/gif,image/webp,image/*" multiple />
+                <button
+                  id="followUpImageButton"
+                  type="button"
+                  class="composer-icon-btn"
+                  data-i18n-aria="submit.attachImage"
+                  data-i18n-title="submit.attachImage"
+                  title="附加图片"
+                  aria-label="附加图片"
+                >
+                  <svg viewBox="0 0 20 20" aria-hidden="true">
+                    <path d="M10 4v12M4 10h12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  id="followUpModelTrigger"
+                  class="composer-model-btn"
+                  aria-haspopup="dialog"
+                  aria-expanded="false"
+                  aria-controls="followUpOptions"
+                  aria-label="模型"
+                >
+                  <span id="followUpModelLabel" class="composer-model-label">模型</span>
+                  <svg class="composer-chevron" viewBox="0 0 12 12" aria-hidden="true">
+                    <path d="M3 4.5 6 7.5 9 4.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" />
+                  </svg>
+                </button>
+              </div>
+              <div class="follow-up-toolbar-end">
                 <button
                   id="followUpInterruptButton"
-                  class="ghost hidden"
+                  class="ghost small hidden"
                   type="button"
                   data-i18n="session.followUpInterrupt"
                 >
                   立即执行
                 </button>
-                <button id="followUpButton" type="submit" data-i18n="session.followUpSend">发送</button>
+                <button
+                  id="followUpButton"
+                  type="submit"
+                  class="composer-send-btn"
+                  data-i18n-aria="session.followUpSend"
+                  data-i18n-title="session.followUpSend"
+                  aria-label="发送"
+                  title="发送"
+                >
+                  <svg viewBox="0 0 20 20" aria-hidden="true">
+                    <path d="M10 16V6M6 10l4-4 4 4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+                  </svg>
+                </button>
               </div>
             </div>
           </form>
@@ -295,63 +334,108 @@
                 更换
               </button>
             </div>
-            <div class="mode-segment" role="group" data-i18n-aria="submit.mode">
-              <button type="button" class="mode-segment-btn active" data-mode="agent" data-i18n="submit.modeAgent">Agent</button>
-              <button type="button" class="mode-segment-btn" data-mode="plan" data-i18n="submit.modePlan">Plan</button>
-            </div>
-            <select id="modeSelect" class="hidden" aria-hidden="true">
-              <option value="agent">agent</option>
-              <option value="plan">plan</option>
-            </select>
-            <div class="model-settings">
-              <label>
-                <span data-i18n="submit.model">模型</span>
-                <select id="modelSelect"></select>
-              </label>
-              <details class="model-advanced" id="newTaskModelAdvanced">
-                <summary data-i18n="submit.modelAdvanced">高级模型选项</summary>
-                <div id="modelParams" class="model-params"></div>
-                <p class="hint" data-i18n="submit.modelHint">思考强度、速度等选项会随所选模型变化。</p>
-              </details>
-            </div>
-            <details class="model-advanced" id="newTaskAgentAdvanced">
-              <summary data-i18n="submit.agentAdvanced">Agent 选项</summary>
-              <div id="extraWorkspaceList" class="chip-list"></div>
-              <label class="inline-toggle">
-                <input id="loadLocalSettingsToggle" type="checkbox" checked />
-                <span data-i18n="submit.loadLocalSettings">加载本机规则 / Skills / MCP</span>
-              </label>
-              <label class="inline-toggle">
-                <input id="sandboxToggle" type="checkbox" />
-                <span data-i18n="submit.sandbox">启用沙箱</span>
-              </label>
-              <label class="inline-toggle">
-                <input id="autoReviewToggle" type="checkbox" />
-                <span data-i18n="submit.autoReview">启用 Auto-review</span>
-              </label>
-              <div>
-                <span class="sheet-label" data-i18n="submit.disallowedTools">禁用工具</span>
-                <div id="disallowedTools" class="chip-list"></div>
+            <div class="follow-up-composer new-task-composer">
+              <div id="newTaskOptions" class="composer-popover hidden">
+                <div class="mode-segment" role="group" data-i18n-aria="submit.mode">
+                  <button type="button" class="mode-segment-btn active" data-mode="agent" data-i18n="submit.modeAgent">Agent</button>
+                  <button type="button" class="mode-segment-btn" data-mode="plan" data-i18n="submit.modePlan">Plan</button>
+                </div>
+                <select id="modeSelect" class="hidden" aria-hidden="true">
+                  <option value="agent">agent</option>
+                  <option value="plan">plan</option>
+                </select>
+                <div class="follow-up-settings">
+                  <label class="follow-up-mode">
+                    <span data-i18n="submit.model">模型</span>
+                    <select id="modelSelect"></select>
+                  </label>
+                </div>
+                <details class="model-advanced" id="newTaskModelAdvanced">
+                  <summary data-i18n="submit.modelAdvanced">高级模型选项</summary>
+                  <div id="modelParams" class="model-params compact"></div>
+                  <p class="hint" data-i18n="submit.modelHint">思考强度、速度等选项会随所选模型变化。</p>
+                </details>
+                <details class="model-advanced" id="newTaskAgentAdvanced">
+                  <summary data-i18n="submit.agentAdvanced">Agent 选项</summary>
+                  <div id="extraWorkspaceList" class="chip-list"></div>
+                  <label class="inline-toggle">
+                    <input id="loadLocalSettingsToggle" type="checkbox" checked />
+                    <span data-i18n="submit.loadLocalSettings">加载本机规则 / Skills / MCP</span>
+                  </label>
+                  <label class="inline-toggle">
+                    <input id="sandboxToggle" type="checkbox" />
+                    <span data-i18n="submit.sandbox">启用沙箱</span>
+                  </label>
+                  <label class="inline-toggle">
+                    <input id="autoReviewToggle" type="checkbox" />
+                    <span data-i18n="submit.autoReview">启用 Auto-review</span>
+                  </label>
+                  <div>
+                    <span class="sheet-label" data-i18n="submit.disallowedTools">禁用工具</span>
+                    <div id="disallowedTools" class="chip-list"></div>
+                  </div>
+                  <p class="hint" data-i18n="submit.agentHint">
+                    默认会读取项目规则、本机 MCP 和 Skills。沙箱在部分 Windows 环境可能不可用。
+                  </p>
+                </details>
               </div>
-              <p class="hint" data-i18n="submit.agentHint">
-                默认会读取项目规则、本机 MCP 和 Skills。沙箱在部分 Windows 环境可能不可用。
-              </p>
-            </details>
-            <label>
-              <span data-i18n="submit.prompt">指令</span>
               <textarea
                 id="promptInput"
-                rows="6"
+                rows="3"
                 data-i18n-placeholder="submit.promptPlaceholder"
-                placeholder="例如：检查这个项目的登录页面问题并修复，完成后运行相关检查。"
+                data-i18n-title="session.followUpHintReady"
+                placeholder="描述要做的任务…"
+                title="Enter 发送，Shift+Enter 换行"
               ></textarea>
-            </label>
-            <div class="image-attach">
-              <input id="newTaskImageInput" class="hidden" type="file" accept="image/jpeg,image/png,image/gif,image/webp,image/*" multiple />
-              <button id="newTaskImageButton" type="button" class="ghost small" data-i18n="submit.attachImage">附加图片</button>
-              <div id="newTaskImagePreviews" class="image-previews"></div>
+              <div id="newTaskImagePreviews" class="image-previews follow-up-previews"></div>
+              <div class="follow-up-toolbar">
+                <div class="follow-up-toolbar-start">
+                  <input id="newTaskImageInput" class="hidden" type="file" accept="image/jpeg,image/png,image/gif,image/webp,image/*" multiple />
+                  <button
+                    id="newTaskImageButton"
+                    type="button"
+                    class="composer-icon-btn"
+                    data-i18n-aria="submit.attachImage"
+                    data-i18n-title="submit.attachImage"
+                    title="附加图片"
+                    aria-label="附加图片"
+                  >
+                    <svg viewBox="0 0 20 20" aria-hidden="true">
+                      <path d="M10 4v12M4 10h12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+                    </svg>
+                  </button>
+                  <button
+                    type="button"
+                    id="newTaskModelTrigger"
+                    class="composer-model-btn"
+                    aria-haspopup="dialog"
+                    aria-expanded="false"
+                    aria-controls="newTaskOptions"
+                    aria-label="模型"
+                  >
+                    <span id="newTaskModelLabel" class="composer-model-label">模型</span>
+                    <svg class="composer-chevron" viewBox="0 0 12 12" aria-hidden="true">
+                      <path d="M3 4.5 6 7.5 9 4.5" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" />
+                    </svg>
+                  </button>
+                </div>
+                <div class="follow-up-toolbar-end">
+                  <button
+                    id="submitJobButton"
+                    type="button"
+                    class="composer-send-btn"
+                    data-i18n-aria="task.start"
+                    data-i18n-title="task.start"
+                    aria-label="开始执行"
+                    title="开始执行"
+                  >
+                    <svg viewBox="0 0 20 20" aria-hidden="true">
+                      <path d="M10 16V6M6 10l4-4 4 4" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" />
+                    </svg>
+                  </button>
+                </div>
+              </div>
             </div>
-            <button id="submitJobButton" type="button" data-i18n="task.start">开始执行</button>
             <p class="hint" data-i18n="submit.shellHint">控制台不会提供任意 Shell，仅把任务提交给 Cursor Agent。</p>
           </div>
         </div>
@@ -525,7 +609,7 @@
             <button id="logoutButton" class="ghost danger" type="button" data-i18n="header.logout">退出登录</button>
             <p class="hint settings-version">
               <span data-i18n="settings.version">版本</span>
-              <span id="appVersion" class="version">v0.4.7</span>
+              <span id="appVersion" class="version">v0.4.9</span>
             </p>
           </div>
         </div>
@@ -603,6 +687,6 @@
 
       <div id="toast" class="toast hidden"></div>
     </main>
-    <script src="/boot.js?v=0.4.7"></script>
+    <script src="/boot.js?v=0.4.9"></script>
   </body>
 </html>

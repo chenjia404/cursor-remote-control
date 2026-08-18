@@ -7,7 +7,7 @@ import {
   setLocale,
   t,
   translateApiError,
-} from "./i18n.js?v=0.4.7";
+} from "./i18n.js?v=0.4.9";
 
 let markedRef = null;
 let purifyRef = null;
@@ -93,7 +93,6 @@ const HISTORY_FILTER_KEY = "cursor-rc-history-filter";
 const ARCHIVED_JOBS_KEY = "cursor-rc-archived-jobs";
 const NOTIFY_STORAGE_KEY = "cursor-rc-notify";
 const ONBOARDING_STORAGE_KEY = "cursor-rc-onboarded";
-const FOLLOW_UP_OPTIONS_KEY = "cursor-rc-follow-up-options-open";
 const SESSION_SUMMARY_KEY = "cursor-rc-session-summary-open";
 
 const state = {
@@ -263,6 +262,10 @@ function applyLocale(locale) {
   renderModelSettings("submit");
   renderModelSettings("followUp");
   renderModelSettings("schedule");
+  updateComposerModelLabel("followUp");
+  updateComposerModelLabel("submit");
+  updateFollowUpSendState();
+  updateNewTaskSendState();
   renderExtraWorkspaces();
   renderScheduleExtraWorkspaces();
   renderDisallowedTools("submit", collectDisallowedTools("submit"));
@@ -479,6 +482,8 @@ function renderImagePreviews(kind) {
       `,
     )
     .join("");
+  if (kind === "followUp") updateFollowUpSendState();
+  if (kind === "submit") updateNewTaskSendState();
 }
 
 async function fileToImagePayload(file) {
@@ -718,6 +723,7 @@ function closeSheet(sheetId) {
   if (!sheet) return;
   sheet.classList.add("hidden");
   sheet.setAttribute("aria-hidden", "true");
+  if (sheetId === "newTaskSheet") setNewTaskOptionsOpen(false);
 }
 
 function closeAllSheets() {
@@ -832,6 +838,7 @@ function applyModelSelection(kind, selection) {
   }
   select.value = chosen.id;
   renderModelParams(kind, chosen);
+  updateComposerModelLabel(kind);
 }
 
 function matchingVariantValue(model, params) {
@@ -906,7 +913,7 @@ function renderModelSettings(kind) {
   applyModelSelection(kind, previous.id ? previous : loadSavedModel());
 }
 
-function formatModelBadge(model) {
+function modelDisplayLabel(model) {
   if (!model?.id) return "";
   const catalog = findCatalogModel(model.id);
   const name = catalog?.displayName || model.id;
@@ -919,8 +926,49 @@ function formatModelBadge(model) {
       return paramValueLabel(param.id, param.value, value?.displayName);
     })
     .filter(Boolean);
-  const label = extras.length ? `${name} · ${extras.join(" / ")}` : name;
+  return extras.length ? `${name} ${extras.join(" ")}` : name;
+}
+
+function formatModelBadge(model) {
+  const label = modelDisplayLabel(model);
+  if (!label) return "";
   return `<span class="mode-badge model-badge">${escapeHtml(label)}</span>`;
+}
+
+function composerOptionIds(kind) {
+  if (kind === "submit") {
+    return { popover: "#newTaskOptions", trigger: "#newTaskModelTrigger", label: "#newTaskModelLabel" };
+  }
+  return { popover: "#followUpOptions", trigger: "#followUpModelTrigger", label: "#followUpModelLabel" };
+}
+
+function updateComposerModelLabel(kind) {
+  if (kind !== "followUp" && kind !== "submit") return;
+  const ids = composerOptionIds(kind);
+  const label = $(ids.label);
+  if (!label) return;
+  const text = modelDisplayLabel(collectModelSelection(kind)) || t("submit.model");
+  label.textContent = text;
+  const trigger = $(ids.trigger);
+  if (trigger) trigger.setAttribute("aria-label", `${t("submit.model")}: ${text}`);
+}
+
+function setComposerOptionsOpen(kind, open) {
+  const ids = composerOptionIds(kind);
+  const popover = $(ids.popover);
+  const trigger = $(ids.trigger);
+  if (!popover || !trigger) return;
+  popover.classList.toggle("hidden", !open);
+  trigger.setAttribute("aria-expanded", open ? "true" : "false");
+  if (kind === "followUp") updateComposerDock();
+}
+
+function setFollowUpOptionsOpen(open) {
+  setComposerOptionsOpen("followUp", open);
+}
+
+function setNewTaskOptionsOpen(open) {
+  setComposerOptionsOpen("submit", open);
 }
 
 let modelRetryCount = 0;
@@ -969,6 +1017,7 @@ function bindModelSettings(kind) {
     const next = { id: select.value, params: defaultParamsForModel(model) };
     renderModelParams(kind, next);
     saveModelSelection(collectModelSelection(kind));
+    updateComposerModelLabel(kind);
   });
   paramsRoot?.addEventListener("change", (event) => {
     const variant = event.target.closest("[data-model-variant]");
@@ -984,6 +1033,7 @@ function bindModelSettings(kind) {
       renderModelParams(kind, { id: select.value, params });
     }
     saveModelSelection(collectModelSelection(kind));
+    updateComposerModelLabel(kind);
   });
 }
 
@@ -1389,30 +1439,47 @@ function rememberFollowUpDraft() {
   }
 }
 
-function autosizeTextarea(input) {
+function isSubmitEnter(event) {
+  return event.key === "Enter" && !event.shiftKey && !event.isComposing && event.keyCode !== 229;
+}
+
+function autosizeTextarea(input, maxHeight = 120) {
   input.style.height = "auto";
-  input.style.height = `${Math.min(input.scrollHeight, 120)}px`;
-  updateComposerDock();
+  input.style.height = `${Math.min(input.scrollHeight, maxHeight)}px`;
+  if (input.id === "followUpInput") updateComposerDock();
+}
+
+function bindComposerPopover(kind) {
+  const ids = composerOptionIds(kind);
+  const trigger = $(ids.trigger);
+  const popover = $(ids.popover);
+  if (!trigger || !popover || trigger.dataset.bound === "1") return;
+  trigger.dataset.bound = "1";
+  trigger.addEventListener("click", (event) => {
+    event.preventDefault();
+    setComposerOptionsOpen(kind, popover.classList.contains("hidden"));
+  });
 }
 
 function bindComposerPanels() {
-  const options = $("#followUpOptions");
-  if (options && options.dataset.bound !== "1") {
-    options.dataset.bound = "1";
-    try {
-      if (readPref(FOLLOW_UP_OPTIONS_KEY) === "1") {
-        options.open = true;
+  bindComposerPopover("followUp");
+  bindComposerPopover("submit");
+
+  if (document.documentElement.dataset.composerOutsideBound !== "1") {
+    document.documentElement.dataset.composerOutsideBound = "1";
+    document.addEventListener("pointerdown", (event) => {
+      const target = event.target;
+      if (!target.closest("#followUpOptions") && !target.closest("#followUpModelTrigger")) {
+        setFollowUpOptionsOpen(false);
       }
-    } catch {
-      // localStorage 不可用时忽略
-    }
-    options.addEventListener("toggle", () => {
-      try {
-        writePref(FOLLOW_UP_OPTIONS_KEY, options.open ? "1" : "0");
-      } catch {
-        // localStorage 不可用时忽略
+      if (!target.closest("#newTaskOptions") && !target.closest("#newTaskModelTrigger")) {
+        setNewTaskOptionsOpen(false);
       }
-      updateComposerDock();
+    });
+    document.addEventListener("keydown", (event) => {
+      if (event.key !== "Escape") return;
+      setFollowUpOptionsOpen(false);
+      setNewTaskOptionsOpen(false);
     });
   }
 
@@ -1425,6 +1492,8 @@ function bindComposerPanels() {
     if (typeof ResizeObserver !== "undefined") {
       const observer = new ResizeObserver(() => updateComposerDock());
       observer.observe(dock);
+      const popover = $("#followUpOptions");
+      if (popover) observer.observe(popover);
     }
   }
 }
@@ -1459,7 +1528,12 @@ function updateComposerDock() {
   appShell.classList.toggle("has-composer", show);
 
   if (show) {
-    const height = dock.offsetHeight;
+    let height = dock.offsetHeight;
+    const popover = $("#followUpOptions");
+    if (popover && !popover.classList.contains("hidden")) {
+      const gap = 8;
+      height += popover.offsetHeight + gap;
+    }
     document.documentElement.style.setProperty("--composer-h", `${height}px`);
   } else {
     document.documentElement.style.setProperty("--composer-h", "0px");
@@ -1935,9 +2009,37 @@ function upsertJob(job) {
   }
 }
 
-function updateFollowUpComposer(job) {
+function updateFollowUpSendState(job) {
   const form = $("#followUpForm");
   const button = $("#followUpButton");
+  const input = $("#followUpInput");
+  if (!form || !button) return;
+
+  const current = job || state.currentJob;
+  const hasContent = Boolean(input?.value.trim() || state.followUpImages.length);
+  const available = Boolean(current) && canFollowUp(current);
+  const busy = Boolean(current) && conversationIsBusy(current);
+  form.classList.toggle("has-content", hasContent);
+  button.disabled = !available || !hasContent;
+  const actionKey = busy ? "session.followUpQueue" : "session.followUpSend";
+  button.setAttribute("aria-label", t(actionKey));
+  button.setAttribute("title", t(actionKey));
+}
+
+function updateNewTaskSendState() {
+  const composer = $(".new-task-composer");
+  const button = $("#submitJobButton");
+  const input = $("#promptInput");
+  if (!button) return;
+  const hasContent = Boolean(input?.value.trim() || state.newTaskImages.length);
+  composer?.classList.toggle("has-content", hasContent);
+  button.disabled = !hasContent;
+  button.setAttribute("aria-label", t("task.start"));
+  button.setAttribute("title", t("task.start"));
+}
+
+function updateFollowUpComposer(job) {
+  const form = $("#followUpForm");
   const interruptButton = $("#followUpInterruptButton");
   const hint = $("#followUpHint");
   const input = $("#followUpInput");
@@ -1947,6 +2049,8 @@ function updateFollowUpComposer(job) {
     form.classList.add("hidden");
     input.value = "";
     followUpBoundJobId = "";
+    setFollowUpOptionsOpen(false);
+    updateFollowUpSendState(null);
     updateComposerDock();
     return;
   }
@@ -1954,6 +2058,7 @@ function updateFollowUpComposer(job) {
   form.classList.remove("hidden");
   if (followUpBoundJobId !== job.id) {
     followUpBoundJobId = job.id;
+    setFollowUpOptionsOpen(false);
     setModeSelect(modeSelect, job.mode || loadSavedMode());
     applyModelSelection("followUp", job.model || loadSavedModel());
     applyAgentOptions("followUp", {
@@ -1973,20 +2078,19 @@ function updateFollowUpComposer(job) {
   }
 
   if (!canFollowUp(job)) {
-    button.disabled = true;
     if (interruptButton) {
       interruptButton.disabled = true;
       interruptButton.classList.add("hidden");
     }
     input.disabled = true;
     hint.textContent = t("session.followUpHintNoAgent");
+    hint.classList.remove("is-ready");
+    updateFollowUpSendState(job);
     updateComposerDock();
     return;
   }
 
   const busy = conversationIsBusy(job);
-  button.disabled = false;
-  button.textContent = busy ? t("session.followUpQueue") : t("session.followUpSend");
   input.disabled = false;
   if (interruptButton) {
     interruptButton.classList.toggle("hidden", !busy);
@@ -1994,6 +2098,8 @@ function updateFollowUpComposer(job) {
     interruptButton.textContent = t("session.followUpInterrupt");
   }
   hint.textContent = busy ? t("session.followUpHintBusy") : t("session.followUpHintReady");
+  hint.classList.toggle("is-ready", !busy);
+  updateFollowUpSendState(job);
   updateComposerDock();
 }
 
@@ -3478,8 +3584,15 @@ function openNewTaskSheet() {
   applyAgentOptions("submit", loadSavedAgentOptions());
   revokeImagePreviews("submit");
   renderImagePreviews("submit");
+  setNewTaskOptionsOpen(false);
+  updateComposerModelLabel("submit");
+  updateNewTaskSendState();
   openSheet("newTaskSheet");
-  window.setTimeout(() => $("#promptInput")?.focus(), 120);
+  window.setTimeout(() => {
+    const input = $("#promptInput");
+    input?.focus();
+    if (input) autosizeTextarea(input, 220);
+  }, 120);
 }
 
 async function submitNewJob() {
@@ -3528,6 +3641,7 @@ async function submitNewJob() {
     state.currentJobId = job.id;
     state.chatPinnedToBottom = true;
     closeSheet("newTaskSheet");
+    setNewTaskOptionsOpen(false);
     enterChat();
     renderCurrentJob(job);
     $("#promptInput").value = "";
@@ -3538,7 +3652,7 @@ async function submitNewJob() {
   } catch (error) {
     showToast(error.message);
   } finally {
-    if (button) button.disabled = false;
+    updateNewTaskSendState();
   }
 }
 
@@ -3906,7 +4020,21 @@ on("#followUpImagePreviews", "click", (event) => {
 });
 
 on("#submitJobButton", "click", () => {
+  setNewTaskOptionsOpen(false);
   submitNewJob().catch((error) => showToast(error.message));
+});
+
+on("#promptInput", "keydown", (event) => {
+  if (!isSubmitEnter(event)) return;
+  event.preventDefault();
+  if ($("#submitJobButton")?.disabled) return;
+  setNewTaskOptionsOpen(false);
+  submitNewJob().catch((error) => showToast(error.message));
+});
+
+on("#promptInput", "input", (event) => {
+  autosizeTextarea(event.currentTarget, 220);
+  updateNewTaskSendState();
 });
 
 on("#headerNewTaskButton", "click", openNewTaskSheet);
@@ -3924,6 +4052,7 @@ window.addEventListener("popstate", () => {
 });
 
 on("#newTaskChangeProjectButton", "click", () => {
+  setNewTaskOptionsOpen(false);
   closeSheet("newTaskSheet");
   switchTab("projects");
 });
@@ -4055,6 +4184,7 @@ on("#followUpForm", "submit", async (event) => {
   const interruptButton = $("#followUpInterruptButton");
   if (button) button.disabled = true;
   if (interruptButton) interruptButton.disabled = true;
+  setFollowUpOptionsOpen(false);
   try {
     await submitFollowUp(prompt, state.currentJobId, "queue");
   } catch (error) {
@@ -4075,6 +4205,7 @@ on("#followUpInterruptButton", "click", async () => {
   const interruptButton = $("#followUpInterruptButton");
   if (button) button.disabled = true;
   if (interruptButton) interruptButton.disabled = true;
+  setFollowUpOptionsOpen(false);
   try {
     await submitFollowUp(prompt, state.currentJobId, "interrupt");
   } catch (error) {
@@ -4091,14 +4222,16 @@ on("#currentJob", "toggle", (event) => {
 });
 
 on("#followUpInput", "keydown", (event) => {
-  if (event.key !== "Enter" || event.shiftKey) return;
+  if (!isSubmitEnter(event)) return;
   event.preventDefault();
+  if ($("#followUpButton")?.disabled) return;
   $("#followUpForm")?.requestSubmit();
 });
 
 on("#followUpInput", "input", (event) => {
   const input = event.currentTarget;
   autosizeTextarea(input);
+  updateFollowUpSendState();
   if (state.currentJobId) {
     if (input.value.trim()) {
       state.followUpDrafts.set(state.currentJobId, input.value);
@@ -4117,7 +4250,7 @@ on("#followUpModeSelect", "change", (event) => {
   saveMode(getModeFromSelect(event.currentTarget));
 });
 
-document.querySelector(".mode-segment")?.addEventListener("click", (event) => {
+document.querySelector("#newTaskSheet .mode-segment")?.addEventListener("click", (event) => {
   const button = event.target.closest(".mode-segment-btn");
   if (!button) return;
   syncModeSelectFromSegment(button.dataset.mode === "plan" ? "plan" : "agent");
@@ -4348,6 +4481,7 @@ state.notifyEnabled = loadNotifyEnabled();
 updateFilterChips();
 setupPullToRefresh();
 bindComposerPanels();
+updateNewTaskSendState();
 window.addEventListener("resize", updateWideLayout);
 ensureMarkdownLibs().catch((error) => {
   console.warn("Markdown 组件加载失败", error);
