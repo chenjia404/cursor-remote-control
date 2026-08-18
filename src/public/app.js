@@ -7,7 +7,7 @@ import {
   setLocale,
   t,
   translateApiError,
-} from "./i18n.js?v=0.4.5";
+} from "./i18n.js?v=0.4.7";
 
 let markedRef = null;
 let purifyRef = null;
@@ -1001,6 +1001,50 @@ function showToast(message) {
   toast.textContent = message;
   toast.classList.remove("hidden");
   window.setTimeout(() => toast.classList.add("hidden"), 3200);
+}
+
+async function copyTextToClipboard(text) {
+  try {
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return;
+    }
+  } catch {
+    // 部分 HTTP / WebView 环境没有剪贴板权限，改用选中复制。
+  }
+
+  const textarea = document.createElement("textarea");
+  textarea.value = text;
+  textarea.setAttribute("readonly", "");
+  textarea.setAttribute("aria-hidden", "true");
+  textarea.style.cssText = "position:fixed;top:0;left:0;width:1px;height:1px;padding:0;border:0;opacity:0;";
+  document.body.appendChild(textarea);
+
+  const previous = document.activeElement;
+  const selection = window.getSelection();
+  const previousRange = selection && selection.rangeCount > 0 ? selection.getRangeAt(0) : null;
+  try {
+    textarea.focus();
+    textarea.select();
+    try {
+      textarea.setSelectionRange(0, textarea.value.length);
+    } catch {
+      // 部分环境只支持 select()
+    }
+    const copied = document.execCommand("copy");
+    if (!copied) throw new Error(t("toast.copyFailed"));
+  } finally {
+    textarea.remove();
+    if (previousRange && selection) {
+      selection.removeAllRanges();
+      try {
+        selection.addRange(previousRange);
+      } catch {
+        // 原选区可能已失效，忽略。
+      }
+    }
+    if (previous instanceof HTMLElement && previous.isConnected) previous.focus();
+  }
 }
 
 function getSessionToken() {
@@ -2047,7 +2091,8 @@ function buildChatMessages(job) {
       appendChatMessage(messages, "assistant", turn.result, turn.finishedAt || job.updatedAt);
     }
 
-    if (!sawAssistant && !sawThinking && !turn.result && ["queued", "running"].includes(turn.status)) {
+    // 排队中的轮次不要占「正在回复」，否则会挡住当前轮思考的增量更新。
+    if (!sawAssistant && !sawThinking && !turn.result && turn.status === "running") {
       messages.push({
         role: "system",
         level: "info",
@@ -2061,7 +2106,57 @@ function buildChatMessages(job) {
 }
 
 function isChatNearBottom(output) {
-  return output.scrollHeight - output.scrollTop - output.clientHeight < 80;
+  return output.scrollHeight - output.scrollTop - output.clientHeight < 120;
+}
+
+const COPY_ICON_SVG = `<svg class="chat-copy-icon" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M16 1H4c-1.1 0-2 .9-2 2v14h2V3h12V1zm3 4H8c-1.1 0-2 .9-2 2v16c0 1.1.9 2 2 2h11c1.1 0 2-.9 2-2V7c0-1.1-.9-2-2-2zm0 18H8V7h11v16z"/></svg>`;
+const COPY_CHECK_SVG = `<svg class="chat-copy-check hidden" viewBox="0 0 24 24" width="16" height="16" aria-hidden="true"><path fill="currentColor" d="M9 16.17 4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41z"/></svg>`;
+const copyFeedbackTimers = new WeakMap();
+
+function chatCopyButtonHtml() {
+  const label = escapeHtml(t("session.copy"));
+  return `
+    <div class="chat-actions">
+      <button type="button" class="chat-copy-btn" data-chat-copy aria-label="${label}" title="${label}">
+        ${COPY_ICON_SVG}
+        ${COPY_CHECK_SVG}
+      </button>
+    </div>
+  `;
+}
+
+function messageCopyText(message) {
+  const text = String(message?.text || "").replace(/^\uFEFF/, "").trim();
+  if (text) return text;
+  if ((message?.images || []).length > 0) return t("session.copyImage");
+  return "";
+}
+
+function showCopyButtonFeedback(button) {
+  if (!button.isConnected) return;
+  const copyIcon = button.querySelector(".chat-copy-icon");
+  const checkIcon = button.querySelector(".chat-copy-check");
+  button.classList.add("is-copied");
+  copyIcon?.classList.add("hidden");
+  checkIcon?.classList.remove("hidden");
+  button.setAttribute("aria-label", t("session.copied"));
+  button.setAttribute("title", t("session.copied"));
+
+  const previous = copyFeedbackTimers.get(button);
+  if (previous) window.clearTimeout(previous);
+  const timer = window.setTimeout(() => {
+    if (!button.isConnected) {
+      copyFeedbackTimers.delete(button);
+      return;
+    }
+    button.classList.remove("is-copied");
+    copyIcon?.classList.remove("hidden");
+    checkIcon?.classList.add("hidden");
+    button.setAttribute("aria-label", t("session.copy"));
+    button.setAttribute("title", t("session.copy"));
+    copyFeedbackTimers.delete(button);
+  }, 1600);
+  copyFeedbackTimers.set(button, timer);
 }
 
 function renderChatMessageHtml(message) {
@@ -2112,26 +2207,98 @@ function renderChatMessageHtml(message) {
         `<a href="/api/jobs/${escapeHtml(message.jobId)}/images/${escapeHtml(image.id)}" target="_blank" rel="noopener"><img src="/api/jobs/${escapeHtml(message.jobId)}/images/${escapeHtml(image.id)}" alt="" /></a>`,
     )
     .join("");
+  const canCopy = Boolean(message.text?.trim()) || Boolean(images);
   return `
     <div class="chat-row chat-${side}">
-      <div class="chat-bubble chat-bubble-${message.role}">
-        <div class="chat-meta">
-          <span>${escapeHtml(label)}</span>
-          <time>${escapeHtml(time)}</time>
+      <div class="chat-col">
+        <div class="chat-bubble chat-bubble-${message.role}">
+          <div class="chat-meta">
+            <span>${escapeHtml(label)}</span>
+            <time>${escapeHtml(time)}</time>
+          </div>
+          ${images ? `<div class="chat-images">${images}</div>` : ""}
+          ${message.text?.trim() ? formatChatBody(message.role, message.text) : ""}
         </div>
-        ${images ? `<div class="chat-images">${images}</div>` : ""}
-        ${message.text?.trim() ? formatChatBody(message.role, message.text) : ""}
+        ${canCopy ? chatCopyButtonHtml() : ""}
       </div>
     </div>
   `;
 }
 
+let lastChatMessages = [];
+
 function rememberChatRender(output, jobId, messages) {
-  const last = messages.at(-1);
   output.dataset.jobId = jobId;
-  output.dataset.msgCount = String(messages.length);
-  output.dataset.lastRole = last?.role || "";
-  output.dataset.lastLen = String(last?.text?.length ?? 0);
+  lastChatMessages = messages;
+}
+
+function resetChatRender(output) {
+  delete output.dataset.jobId;
+  lastChatMessages = [];
+}
+
+function chatMessageEquals(a, b) {
+  if (a.role !== b.role || (a.level || "") !== (b.level || "")) return false;
+  const aText = a.text || "";
+  const bText = b.text || "";
+  if (aText.length !== bText.length || aText !== bText) return false;
+  const aImages = a.images || [];
+  const bImages = b.images || [];
+  if (aImages.length !== bImages.length) return false;
+  for (let index = 0; index < aImages.length; index += 1) {
+    if (aImages[index]?.id !== bImages[index]?.id) return false;
+  }
+  return true;
+}
+
+function chatMessageSameSlot(a, b) {
+  return a.role === b.role && (a.level || "") === (b.level || "");
+}
+
+function chatElementMatchesRole(el, message) {
+  if (!el) return false;
+  if (message.role === "system") return el.classList.contains("chat-system");
+  if (message.role === "thinking") return Boolean(el.querySelector(":scope > .chat-thinking"));
+  if (message.role === "tool") return Boolean(el.querySelector(":scope > .chat-tool"));
+  if (message.role === "user") return el.classList.contains("chat-right");
+  if (message.role === "assistant") {
+    return el.classList.contains("chat-left") && Boolean(el.querySelector(".chat-bubble-assistant"));
+  }
+  return false;
+}
+
+function findChatUpdate(prev, next) {
+  if (!prev.length) return { type: "replace", index: 0 };
+  const minLen = Math.min(prev.length, next.length);
+  let index = 0;
+  while (index < minLen && chatMessageEquals(prev[index], next[index])) index += 1;
+
+  if (index === prev.length && index === next.length) return { type: "none" };
+
+  if (next.length === prev.length + 1 && index === prev.length) {
+    return { type: "append" };
+  }
+
+  if (prev.length === next.length && index < next.length && chatMessageSameSlot(prev[index], next[index])) {
+    let rest = index + 1;
+    while (rest < next.length && chatMessageEquals(prev[rest], next[rest])) rest += 1;
+    if (rest === next.length) return { type: "patch", index };
+  }
+
+  return { type: "splice", index };
+}
+
+function spliceChatMessages(output, messages, index) {
+  clearPendingMarkdown();
+  while (output.children.length > index) {
+    output.lastElementChild.remove();
+  }
+  if (index <= 0) {
+    output.innerHTML = messages.map((item) => renderChatMessageHtml(item)).join("");
+    return;
+  }
+  const html = messages.slice(index).map((item) => renderChatMessageHtml(item)).join("");
+  if (html) output.insertAdjacentHTML("beforeend", html);
 }
 
 function finishChatScroll(output, wasNearBottom) {
@@ -2178,7 +2345,7 @@ function setMarkdownBody(body, text) {
   }
 }
 
-function updateLastChatElement(el, message) {
+function updateChatElement(el, message) {
   const time = formatTime(message.time);
   el.querySelectorAll("time").forEach((node) => {
     node.textContent = time;
@@ -2220,10 +2387,7 @@ function renderChatMessages(job) {
   if (!job) {
     clearPendingMarkdown();
     output.innerHTML = "";
-    delete output.dataset.jobId;
-    delete output.dataset.msgCount;
-    delete output.dataset.lastRole;
-    delete output.dataset.lastLen;
+    resetChatRender(output);
     return;
   }
 
@@ -2231,39 +2395,37 @@ function renderChatMessages(job) {
   if (messages.length === 0) {
     clearPendingMarkdown();
     output.innerHTML = `<p class="empty">${escapeHtml(t("session.noChat"))}</p>`;
-    delete output.dataset.jobId;
-    delete output.dataset.msgCount;
+    resetChatRender(output);
     return;
   }
 
   const wasNearBottom = isChatNearBottom(output);
   const prevJobId = output.dataset.jobId;
-  const prevCount = Number(output.dataset.msgCount || 0);
   const last = messages.at(-1);
-  const lastEl = output.lastElementChild;
-  const canPatchLast =
+  const canReuseDom =
     prevJobId === job.id &&
-    messages.length === prevCount &&
-    last &&
-    last.role === output.dataset.lastRole &&
-    lastEl &&
-    !output.querySelector(":scope > .empty");
-  const canAppend =
-    prevJobId === job.id &&
-    messages.length === prevCount + 1 &&
-    output.children.length === prevCount &&
-    last &&
+    output.children.length === lastChatMessages.length &&
+    lastChatMessages.length > 0 &&
     !output.querySelector(":scope > .empty");
 
-  if (canPatchLast) {
-    updateLastChatElement(lastEl, last);
-    rememberChatRender(output, job.id, messages);
-    finishChatScroll(output, wasNearBottom);
-    return;
-  }
-
-  if (canAppend) {
-    output.insertAdjacentHTML("beforeend", renderChatMessageHtml(last));
+  if (canReuseDom) {
+    const update = findChatUpdate(lastChatMessages, messages);
+    if (update.type === "none") {
+      finishChatScroll(output, wasNearBottom);
+      return;
+    }
+    if (update.type === "patch") {
+      const target = output.children[update.index];
+      if (target && chatElementMatchesRole(target, messages[update.index])) {
+        updateChatElement(target, messages[update.index]);
+      } else {
+        spliceChatMessages(output, messages, update.index);
+      }
+    } else if (update.type === "append") {
+      output.insertAdjacentHTML("beforeend", renderChatMessageHtml(last));
+    } else {
+      spliceChatMessages(output, messages, update.index);
+    }
     rememberChatRender(output, job.id, messages);
     finishChatScroll(output, wasNearBottom);
     return;
@@ -4023,6 +4185,34 @@ on("#chatOutput", "scroll", () => {
   const nearBottom = isChatNearBottom(output);
   state.chatPinnedToBottom = nearBottom;
   $("#newMessagesFab")?.classList.toggle("hidden", nearBottom);
+});
+
+on("#chatOutput", "click", async (event) => {
+  const target = event.target instanceof Element ? event.target : null;
+  const button = target?.closest("[data-chat-copy]");
+  const output = $("#chatOutput");
+  if (!button || !output?.contains(button)) return;
+
+  const row = button.closest(".chat-row");
+  const index = row ? Array.prototype.indexOf.call(output.children, row) : -1;
+  const message = index >= 0 ? lastChatMessages[index] : null;
+  if (!message || (message.role !== "user" && message.role !== "assistant")) {
+    showToast(t("toast.copyFailed"));
+    return;
+  }
+
+  const markdown = messageCopyText(message);
+  if (!markdown) {
+    showToast(t("toast.copyFailed"));
+    return;
+  }
+
+  try {
+    await copyTextToClipboard(markdown);
+    showCopyButtonFeedback(button);
+  } catch {
+    showToast(t("toast.copyFailed"));
+  }
 });
 
 on("#newMessagesFab", "click", () => {
