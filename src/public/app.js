@@ -7,7 +7,7 @@ import {
   setLocale,
   t,
   translateApiError,
-} from "./i18n.js?v=0.4.4";
+} from "./i18n.js?v=0.4.5";
 
 let markedRef = null;
 let purifyRef = null;
