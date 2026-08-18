@@ -1,4 +1,4 @@
-const APP_VERSION = "0.4.9";
+const APP_VERSION = "0.4.10";
 const CACHE_NAME = `cursor-remote-control-v${APP_VERSION}`;
 const APP_SHELL = [
   "/",
@@ -6,6 +6,7 @@ const APP_SHELL = [
   `/boot.js?v=${APP_VERSION}`,
   `/app.js?v=${APP_VERSION}`,
   `/i18n.js?v=${APP_VERSION}`,
+  `/voice.js?v=${APP_VERSION}`,
   "/vendor/marked.esm.js",
   "/vendor/purify.es.mjs",
   "/manifest.webmanifest",

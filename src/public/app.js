@@ -7,7 +7,24 @@ import {
   setLocale,
   t,
   translateApiError,
-} from "./i18n.js?v=0.4.9";
+} from "./i18n.js?v=0.4.10";
+import {
+  canVoiceInput,
+  cancelRecording,
+  cancelSpeech,
+  ingestJobSpeech,
+  isRecording,
+  isSpeaking,
+  recordElapsedMs,
+  resetSpeechTracking,
+  startRecording,
+  startWebSpeech,
+  stopRecording,
+  stopWebSpeech,
+  transcribeWithServer,
+  unlockSpeech,
+  warmupMic,
+} from "./voice.js?v=0.4.10";
 
 let markedRef = null;
 let purifyRef = null;
@@ -92,6 +109,7 @@ const TAB_STORAGE_KEY = "cursor-rc-tab";
 const HISTORY_FILTER_KEY = "cursor-rc-history-filter";
 const ARCHIVED_JOBS_KEY = "cursor-rc-archived-jobs";
 const NOTIFY_STORAGE_KEY = "cursor-rc-notify";
+const VOICE_STORAGE_KEY = "cursor-rc-voice";
 const ONBOARDING_STORAGE_KEY = "cursor-rc-onboarded";
 const SESSION_SUMMARY_KEY = "cursor-rc-session-summary-open";
 
@@ -111,6 +129,15 @@ const state = {
   showArchived: false,
   archivedJobIds: new Set(),
   notifyEnabled: false,
+  voice: {
+    enabled: false,
+    autoSend: true,
+    speakThinking: true,
+    speakTools: true,
+    speakReply: true,
+    transcribe: false,
+    phase: "idle",
+  },
   lastNotifiedStatus: new Map(),
   pollingTimer: null,
   installPromptEvent: null,
@@ -281,6 +308,7 @@ function applyLocale(locale) {
   syncScheduleModeSegment();
   updateFilterChips();
   updateOnboardingVisibility();
+  updateVoiceUi();
 }
 
 function loadSavedMode() {
@@ -627,6 +655,295 @@ function saveNotifyEnabled(enabled) {
   } catch {
     // localStorage 不可用时忽略
   }
+}
+
+function defaultVoicePrefs() {
+  return {
+    enabled: false,
+    autoSend: true,
+    speakThinking: true,
+    speakTools: true,
+    speakReply: true,
+  };
+}
+
+function loadVoicePrefs() {
+  try {
+    const raw = readPref(VOICE_STORAGE_KEY);
+    if (!raw) return defaultVoicePrefs();
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return defaultVoicePrefs();
+    return {
+      enabled: Boolean(parsed.enabled),
+      autoSend: parsed.autoSend !== false,
+      speakThinking: parsed.speakThinking !== false,
+      speakTools: parsed.speakTools !== false,
+      speakReply: parsed.speakReply !== false,
+    };
+  } catch {
+    return defaultVoicePrefs();
+  }
+}
+
+function saveVoicePrefs(partial = {}) {
+  const next = { ...loadVoicePrefs(), ...partial };
+  state.voice.enabled = next.enabled;
+  state.voice.autoSend = next.autoSend;
+  state.voice.speakThinking = next.speakThinking;
+  state.voice.speakTools = next.speakTools;
+  state.voice.speakReply = next.speakReply;
+  try {
+    writePref(VOICE_STORAGE_KEY, JSON.stringify(next));
+  } catch {
+    // localStorage 不可用时忽略
+  }
+  return next;
+}
+
+function applyVoicePrefsToForm() {
+  const prefs = loadVoicePrefs();
+  state.voice.enabled = prefs.enabled;
+  state.voice.autoSend = prefs.autoSend;
+  state.voice.speakThinking = prefs.speakThinking;
+  state.voice.speakTools = prefs.speakTools;
+  state.voice.speakReply = prefs.speakReply;
+  const mapping = [
+    ["#voiceModeToggle", prefs.enabled],
+    ["#voiceAutoSendToggle", prefs.autoSend],
+    ["#voiceSpeakThinkingToggle", prefs.speakThinking],
+    ["#voiceSpeakToolsToggle", prefs.speakTools],
+    ["#voiceSpeakReplyToggle", prefs.speakReply],
+  ];
+  for (const [selector, value] of mapping) {
+    const input = $(selector);
+    if (input) input.checked = value;
+  }
+}
+
+let voiceBusy = false;
+let voiceTarget = "";
+let webSpeechFinal = "";
+let voiceTickTimer = 0;
+
+function startVoiceTick() {
+  if (voiceTickTimer) return;
+  voiceTickTimer = window.setInterval(() => updateVoiceUi(), 500);
+}
+
+function stopVoiceTick() {
+  if (!voiceTickTimer) return;
+  window.clearInterval(voiceTickTimer);
+  voiceTickTimer = 0;
+}
+
+function voiceStatusText() {
+  if (state.voice.phase === "recording") {
+    const seconds = Math.max(0, Math.floor(recordElapsedMs() / 1000));
+    return seconds > 0 ? t("voice.recordingTime", { seconds }) : t("voice.recording");
+  }
+  if (state.voice.phase === "transcribing") return t("voice.transcribing");
+  if (state.voice.enabled && isSpeaking()) return t("voice.speaking");
+  return "";
+}
+
+function updateVoiceUi() {
+  const recording = state.voice.phase === "recording";
+  const busy = state.voice.phase === "transcribing";
+  for (const id of ["followUpVoiceButton", "newTaskVoiceButton"]) {
+    const button = $(`#${id}`);
+    if (!button) continue;
+    button.classList.toggle("is-recording", recording && voiceTarget === (id === "followUpVoiceButton" ? "followUp" : "submit"));
+    button.classList.toggle("is-busy", busy && voiceTarget === (id === "followUpVoiceButton" ? "followUp" : "submit"));
+    button.setAttribute("aria-pressed", recording ? "true" : "false");
+    const key = recording ? "voice.stop" : "voice.mic";
+    button.setAttribute("aria-label", t(key));
+    button.title = t(key);
+    if (id === "followUpVoiceButton") {
+      const job = state.currentJob;
+      button.disabled = busy || (job ? !canFollowUp(job) : false);
+    } else {
+      button.disabled = busy;
+    }
+  }
+  const hint = $("#followUpHint");
+  const status = voiceStatusText();
+  if (hint && status) hint.textContent = status;
+  updateComposerDock();
+}
+
+function ingestCurrentJobSpeech(job) {
+  if (state.voice.phase === "recording" || state.voice.phase === "transcribing") return;
+  const prefs = loadVoicePrefs();
+  ingestJobSpeech(job, {
+    enabled: prefs.enabled && state.inChat,
+    speakThinking: prefs.speakThinking,
+    speakTools: prefs.speakTools,
+    speakReply: prefs.speakReply,
+    lang: localeTag(),
+    t,
+    onSkipCode: () => showToast(t("voice.skipCode")),
+  });
+}
+
+function fillVoiceDraft(kind, text, { replace = false } = {}) {
+  const input = kind === "followUp" ? $("#followUpInput") : $("#promptInput");
+  if (!input) return;
+  const next = replace ? text : [input.value.trim(), text].filter(Boolean).join(" ");
+  input.value = next;
+  autosizeTextarea(input, kind === "followUp" ? 120 : 220);
+  if (kind === "followUp") {
+    updateFollowUpSendState();
+    if (state.currentJobId) {
+      if (next.trim()) state.followUpDrafts.set(state.currentJobId, input.value);
+      else state.followUpDrafts.delete(state.currentJobId);
+    }
+  } else {
+    updateNewTaskSendState();
+  }
+}
+
+async function applyVoiceTranscript(kind, text) {
+  const cleaned = String(text || "").trim();
+  const input = kind === "followUp" ? $("#followUpInput") : $("#promptInput");
+  const existing = input?.value.trim() || "";
+  if (cleaned && existing !== cleaned && !existing.endsWith(cleaned)) {
+    fillVoiceDraft(kind, cleaned);
+  }
+  const prompt = (input?.value || cleaned).trim();
+  if (!prompt) {
+    showToast(t("voice.empty"));
+    return;
+  }
+
+  const prefs = loadVoicePrefs();
+  if (!prefs.autoSend) return;
+
+  if (kind === "followUp") {
+    const delivery = conversationIsBusy(state.currentJob) ? "interrupt" : "queue";
+    await submitFollowUp(prompt, state.currentJobId, delivery);
+    return;
+  }
+  await submitNewJob();
+}
+
+async function startVoiceCapture(kind) {
+  voiceTarget = kind;
+  webSpeechFinal = "";
+  state.voice.phase = "recording";
+  startVoiceTick();
+  updateVoiceUi();
+  cancelSpeech();
+  unlockSpeech();
+  if (state.voice.transcribe) {
+    await startRecording({
+      onLimit: () => {
+        if (state.voice.phase === "recording") void finishVoiceCapture(kind);
+      },
+    });
+    return;
+  }
+  startWebSpeech({
+    language: localeTag(),
+    onResult: ({ text, ended, error }) => {
+      if (error) {
+        state.voice.phase = "idle";
+        updateVoiceUi();
+        showToast(t("voice.unsupported"));
+        return;
+      }
+      if (text) {
+        webSpeechFinal = text;
+        fillVoiceDraft(kind, text, { replace: true });
+      }
+      if (ended && state.voice.phase === "recording" && !voiceBusy) {
+        void finishVoiceCapture(kind);
+      }
+    },
+  });
+}
+
+async function finishVoiceCapture(kind) {
+  if (voiceBusy) return;
+  voiceBusy = true;
+  try {
+    let text = "";
+    if (state.voice.transcribe) {
+      state.voice.phase = "transcribing";
+      updateVoiceUi();
+      const blob = await stopRecording();
+      if (!blob || blob.size < 600) {
+        showToast(t("voice.tooShort"));
+        return;
+      }
+      text = await transcribeWithServer(blob, {
+        postJson: (path, body) => api(path, { method: "POST", body: JSON.stringify(body) }),
+        language: getLocale() === "en" ? "en" : "zh",
+      });
+    } else {
+      text = (await stopWebSpeech()) || webSpeechFinal;
+    }
+    await applyVoiceTranscript(kind, text);
+  } catch (error) {
+    showToast(error instanceof Error ? error.message : t("api.transcribeFailed"));
+  } finally {
+    state.voice.phase = "idle";
+    voiceBusy = false;
+    voiceTarget = "";
+    stopVoiceTick();
+    updateVoiceUi();
+    updateFollowUpComposer(state.currentJob);
+  }
+}
+
+async function toggleVoiceInput(kind) {
+  if (voiceBusy) return;
+  if (isRecording() || state.voice.phase === "recording") {
+    await finishVoiceCapture(kind);
+    return;
+  }
+  if (!canVoiceInput(state.voice.transcribe)) {
+    showToast(state.voice.transcribe ? t("voice.unsupported") : t("voice.noTranscribe"));
+    return;
+  }
+  if (!state.voice.enabled) {
+    saveVoicePrefs({ enabled: true });
+    applyVoicePrefsToForm();
+    ingestCurrentJobSpeech(state.currentJob);
+  }
+  try {
+    unlockSpeech();
+    await warmupMic();
+  } catch {
+    showToast(t("voice.micDenied"));
+    return;
+  }
+  try {
+    await startVoiceCapture(kind);
+  } catch (error) {
+    state.voice.phase = "idle";
+    updateVoiceUi();
+    const name = error instanceof Error ? error.name : "";
+    if (error instanceof Error && error.message === "unsupported") {
+      showToast(t("voice.unsupported"));
+      return;
+    }
+    if (name === "NotAllowedError" || name === "NotFoundError") {
+      showToast(t("voice.micDenied"));
+      return;
+    }
+    showToast(t("voice.recordFailed"));
+  }
+}
+
+function stopVoiceSession() {
+  cancelRecording();
+  cancelSpeech();
+  resetSpeechTracking();
+  state.voice.phase = "idle";
+  voiceBusy = false;
+  voiceTarget = "";
+  stopVoiceTick();
+  updateVoiceUi();
 }
 
 function isOnboardingDone() {
@@ -1743,6 +2060,7 @@ function enterChat() {
 function leaveChat({ fromPopstate = false } = {}) {
   if (!state.inChat) return;
   state.inChat = false;
+  stopVoiceSession();
   stopJobEventStream();
   rememberFollowUpDraft();
   state.currentJobId = "";
@@ -2051,6 +2369,7 @@ function updateFollowUpComposer(job) {
     followUpBoundJobId = "";
     setFollowUpOptionsOpen(false);
     updateFollowUpSendState(null);
+    updateVoiceUi();
     updateComposerDock();
     return;
   }
@@ -2083,9 +2402,10 @@ function updateFollowUpComposer(job) {
       interruptButton.classList.add("hidden");
     }
     input.disabled = true;
-    hint.textContent = t("session.followUpHintNoAgent");
+    hint.textContent = voiceStatusText() || t("session.followUpHintNoAgent");
     hint.classList.remove("is-ready");
     updateFollowUpSendState(job);
+    updateVoiceUi();
     updateComposerDock();
     return;
   }
@@ -2097,9 +2417,11 @@ function updateFollowUpComposer(job) {
     interruptButton.disabled = !busy;
     interruptButton.textContent = t("session.followUpInterrupt");
   }
-  hint.textContent = busy ? t("session.followUpHintBusy") : t("session.followUpHintReady");
-  hint.classList.toggle("is-ready", !busy);
+  const voiceStatus = voiceStatusText();
+  hint.textContent = voiceStatus || (busy ? t("session.followUpHintBusy") : t("session.followUpHintReady"));
+  hint.classList.toggle("is-ready", !busy && !voiceStatus);
   updateFollowUpSendState(job);
+  updateVoiceUi();
   updateComposerDock();
 }
 
@@ -2586,6 +2908,7 @@ function renderCurrentJob(job, options = {}) {
     updateFollowUpComposer(job);
     updateStopButton(job);
     updateContextHeader(job);
+    ingestCurrentJobSpeech(job);
     return;
   }
 
@@ -2615,6 +2938,7 @@ function renderCurrentJob(job, options = {}) {
   updateStopButton(job);
   updateContextHeader(job);
   updateOnboardingVisibility();
+  ingestCurrentJobSpeech(job);
 }
 
 let currentJobPollInFlight = false;
@@ -3670,6 +3994,8 @@ async function bootstrap() {
     state.csrfToken = session.csrfToken;
     applyAuthFromSession(session);
     applySessionAgentDefaults(session);
+    state.voice.transcribe = Boolean(session.voice?.transcribe);
+    applyVoicePrefsToForm();
     setLoggedIn(true);
     await refreshData();
   } catch {
@@ -3704,6 +4030,8 @@ export async function onBootAuthenticated(session) {
   stripCredentialsFromUrl();
   setLoggedIn(true);
   applySessionAgentDefaults(session);
+  state.voice.transcribe = Boolean(session?.voice?.transcribe);
+  applyVoicePrefsToForm();
   state.selectedProjectId = loadSavedProjectId();
   state.historyFilter = loadHistoryFilter();
   state.archivedJobIds = loadArchivedJobIds();
@@ -3718,6 +4046,7 @@ export async function onBootAuthenticated(session) {
   await ensureMarkdownLibs().catch(() => {});
   await refreshData();
   updateOnboardingVisibility();
+  updateVoiceUi();
 }
 
 window.__crcApp = {
@@ -4298,6 +4627,44 @@ on("#dismissOnboardingButton", "click", () => {
   updateOnboardingVisibility();
 });
 
+on("#followUpVoiceButton", "click", () => {
+  toggleVoiceInput("followUp").catch((error) => showToast(error.message));
+});
+
+on("#newTaskVoiceButton", "click", () => {
+  toggleVoiceInput("submit").catch((error) => showToast(error.message));
+});
+
+on("#voiceModeToggle", "change", (event) => {
+  const enabled = Boolean(event.currentTarget.checked);
+  saveVoicePrefs({ enabled });
+  if (enabled) {
+    unlockSpeech();
+    warmupMic().catch(() => {});
+    ingestCurrentJobSpeech(state.currentJob);
+  } else {
+    cancelSpeech();
+    resetSpeechTracking();
+  }
+  updateVoiceUi();
+});
+
+on("#voiceAutoSendToggle", "change", (event) => {
+  saveVoicePrefs({ autoSend: Boolean(event.currentTarget.checked) });
+});
+
+on("#voiceSpeakThinkingToggle", "change", (event) => {
+  saveVoicePrefs({ speakThinking: Boolean(event.currentTarget.checked) });
+});
+
+on("#voiceSpeakToolsToggle", "change", (event) => {
+  saveVoicePrefs({ speakTools: Boolean(event.currentTarget.checked) });
+});
+
+on("#voiceSpeakReplyToggle", "change", (event) => {
+  saveVoicePrefs({ speakReply: Boolean(event.currentTarget.checked) });
+});
+
 on("#notifyToggle", "change", async (event) => {
   const enabled = Boolean(event.currentTarget.checked);
   if (enabled) {
@@ -4478,6 +4845,8 @@ applyModels(FALLBACK_MODELS, { id: "default" });
 state.historyFilter = loadHistoryFilter();
 state.archivedJobIds = loadArchivedJobIds();
 state.notifyEnabled = loadNotifyEnabled();
+applyVoicePrefsToForm();
+updateVoiceUi();
 updateFilterChips();
 setupPullToRefresh();
 bindComposerPanels();

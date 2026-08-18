@@ -71,6 +71,7 @@ import {
 } from "./jobs.js";
 import { readJobImage, saveJobImages } from "./jobImages.js";
 import { defaultModelSelection, listCursorModels, normalizeModelSelection, warmupModelCatalog } from "./models.js";
+import { publicVoiceCapabilities, transcribeAudio } from "./transcribe.js";
 import {
   browseDirectory,
   getProjectById,
@@ -135,6 +136,12 @@ const followUpSchema = z.object({
   autoReview: z.boolean().optional(),
   disallowedTools: z.array(z.string().min(1).max(64)).max(32).optional(),
   images: agentRunOptionsSchema.images,
+});
+
+const transcribeSchema = z.object({
+  data: z.string().min(1),
+  mimeType: z.string().min(1).max(64).optional(),
+  language: z.enum(["zh", "en", "zh-CN", "en-US"]).optional(),
 });
 
 const simpleScheduleSchema = z.object({
@@ -270,8 +277,13 @@ async function start(): Promise<void> {
         styleSrc: ["'self'", "'unsafe-inline'"],
         connectSrc: ["'self'"],
         imgSrc: ["'self'", "data:", "blob:"],
+        mediaSrc: ["'self'", "blob:"],
       },
     },
+  });
+  app.addHook("onSend", async (_request, reply, payload) => {
+    reply.header("Permissions-Policy", "microphone=(self)");
+    return payload;
   });
   await app.register(rateLimit, {
     max: 120,
@@ -294,6 +306,7 @@ async function start(): Promise<void> {
         fileName === "i18n.js" ||
         fileName === "sw.js" ||
         fileName === "version.js" ||
+        fileName === "voice.js" ||
         fileName === "styles.css"
       ) {
         reply.header("Cache-Control", "no-cache, no-store, must-revalidate");
@@ -326,6 +339,7 @@ async function start(): Promise<void> {
       csrfToken: issued.csrfToken,
       sessionToken: issued.sessionToken,
       agentOptions: publicAgentOptionDefaults(),
+      voice: publicVoiceCapabilities(),
     };
   });
 
@@ -340,6 +354,7 @@ async function start(): Promise<void> {
     sessionToken: getRawSessionToken(request),
     version: config.appVersion,
     agentOptions: publicAgentOptionDefaults(),
+    voice: publicVoiceCapabilities(),
   }));
 
   app.get("/api/permissions", { preHandler: requireAuth }, async () => publicPermissionCatalog());
@@ -358,6 +373,25 @@ async function start(): Promise<void> {
       defaultModel: defaultModelSelection(models),
     };
   });
+
+  app.post(
+    "/api/transcribe",
+    {
+      preHandler: requireCsrf,
+      config: { rateLimit: { max: 10, timeWindow: "1 minute" } },
+    },
+    async (request, reply) => {
+      const body = transcribeSchema.parse(request.body);
+      try {
+        const text = await transcribeAudio({ data: body.data, language: body.language });
+        return { text };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        const code = message === "未配置语音转写" ? 503 : 400;
+        reply.code(code).send({ error: message });
+      }
+    },
+  );
 
   app.get("/api/projects/browse", { preHandler: [requireAuth, requirePermission("projects.browse")] }, async (request, reply) => {
     const query = browseSchema.parse(request.query);

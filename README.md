@@ -18,6 +18,7 @@
 - 支持在 `PROJECT_ROOTS` 范围内按目录浏览并确认项目；下拉列表只显示已确认过的项目。
 - 通过 Cursor SDK 的本地模式在项目目录中执行 Agent 任务。
 - 默认加载本机项目规则、Skills 与 MCP；可附加多个已确认工作区、限制工具、开启沙箱 / Auto-review，并支持图片输入。
+- 可选语音模式：说话转成指令并提交；执行中会朗读思考、简短播报工具，再朗读回复。听到思路不对时再说一句会打断当前轮。
 - 会话中展示工具调用、用量，以及思考与回复。
 - 保存任务历史、运行状态、Agent ID、Run ID 和日志。一个任务即一轮会话，可在同一任务内追加多轮指令。任务进行中时默认排队，也可点「追加」中断当前轮立刻执行。
 - 可按已确认项目创建定时规则：简单周期（每天 / 每周 / 每月 / 每 N 小时）或 Cron。到点后自动把固定指令交给 Cursor Agent；默认每次新建任务，也可继续上次会话。上一轮未结束会跳过本轮，服务停机只补跑一次。
@@ -54,6 +55,16 @@ COOKIE_SECURE=false
 ```
 
 可选：`CURSOR_SETTING_SOURCES`（默认 `project,user,plugins`，加载本机规则 / Skills / MCP）、`CURSOR_SANDBOX`、`CURSOR_AUTO_REVIEW`、`CURSOR_DISALLOWED_TOOLS`。任务提交时仍可在网页上覆盖这些开关。
+
+可选语音转写（推荐，iPhone 需要）：
+
+```env
+TRANSCRIBE_BASE_URL=https://api.openai.com/v1
+TRANSCRIBE_API_KEY=sk-xxx
+TRANSCRIBE_MODEL=whisper-1
+```
+
+也可把 `TRANSCRIBE_BASE_URL` 设成其他 OpenAI 兼容地址。不配密钥时，仅部分 Android Chrome 能用浏览器自带语音识别。语音模式需要 HTTPS（或本机 localhost）。录音不会落盘，转写结果仍走现有任务接口。
 
 `PROJECT_ROOTS` 使用英文分号分隔多个目录，路径为本机 Windows 路径。建议只配置项目根目录，不要配置整个系统盘。
 

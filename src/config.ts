@@ -51,6 +51,9 @@ const envSchema = z.object({
     .string()
     .optional()
     .transform((value) => value === "true"),
+  TRANSCRIBE_BASE_URL: z.string().optional().default("https://api.openai.com/v1"),
+  TRANSCRIBE_API_KEY: z.string().optional().default(""),
+  TRANSCRIBE_MODEL: z.string().optional().default("whisper-1"),
 });
 
 const env = envSchema.parse(process.env);
@@ -144,6 +147,9 @@ export const config = {
   dataDir: resolveFromRoot(env.DATA_DIR),
   cookieSecure: resolveCookieSecure(),
   enableTotp: env.ENABLE_TOTP ?? false,
+  transcribeBaseUrl: env.TRANSCRIBE_BASE_URL.replace(/\/+$/, ""),
+  transcribeApiKey: env.TRANSCRIBE_API_KEY.trim(),
+  transcribeModel: env.TRANSCRIBE_MODEL.trim() || "whisper-1",
 };
 
 export function assertRequiredConfig(): void {

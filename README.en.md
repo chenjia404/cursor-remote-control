@@ -18,6 +18,7 @@ The UI supports Chinese and English. Use the language switcher in the top-right 
 - Browse directories within `PROJECT_ROOTS` and confirm projects; the dropdown only lists confirmed projects.
 - Runs Agent tasks in the project directory via Cursor SDK local mode.
 - Loads local project rules, Skills, and MCP by default. You can attach extra confirmed workspaces, restrict tools, enable sandbox / Auto-review, and send images.
+- Optional voice mode: speak a prompt to send it. While a turn runs, the UI reads thinking, briefly announces tools, then reads the reply. Speaking again during a run interrupts that turn.
 - The session view shows tool calls, token usage, thinking, and replies.
 - Persists job history, status, Agent ID, Run ID, and logs. One job is one conversation; follow-up messages stay on the same job. While a round is running, follow-ups queue by default; Append interrupts the current round and runs immediately.
 - Scheduled rules on confirmed projects: simple cadence (daily / weekly / monthly / every N hours) or cron. When due, the saved prompt is sent to the Cursor Agent. Each run starts a new job by default, or continues the last session. A still-running previous job skips that occurrence; downtime is caught up at most once.
@@ -54,6 +55,16 @@ COOKIE_SECURE=false
 ```
 
 Optional: `CURSOR_SETTING_SOURCES` (default `project,user,plugins` to load local rules / Skills / MCP), `CURSOR_SANDBOX`, `CURSOR_AUTO_REVIEW`, and `CURSOR_DISALLOWED_TOOLS`. The web UI can still override these per task.
+
+Optional speech-to-text (recommended; required on iPhone):
+
+```env
+TRANSCRIBE_BASE_URL=https://api.openai.com/v1
+TRANSCRIBE_API_KEY=sk-xxx
+TRANSCRIBE_MODEL=whisper-1
+```
+
+`TRANSCRIBE_BASE_URL` can point at any OpenAI-compatible endpoint. Without a key, only some Android Chrome browsers can use built-in speech recognition. Voice mode needs HTTPS (or localhost). Recordings are not saved; the transcript still goes through the existing job APIs.
 
 `PROJECT_ROOTS` is a semicolon-separated list of local Windows paths. Prefer project roots, not entire system drives.
 

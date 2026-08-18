@@ -948,6 +948,31 @@ button.small {
   color: #f8fafc;
 }
 
+.voice-btn.is-recording {
+  background: rgba(239, 68, 68, 0.16);
+  border-color: #ef4444;
+  color: #fecaca;
+}
+
+.voice-btn.is-recording svg {
+  animation: voice-pulse 1s ease-in-out infinite;
+}
+
+.voice-btn.is-busy {
+  border-color: #38bdf8;
+  color: #7dd3fc;
+}
+
+@keyframes voice-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.45;
+  }
+}
+
 .composer-icon-btn svg,
 .composer-send-btn svg,
 .composer-chevron {

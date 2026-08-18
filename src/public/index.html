@@ -12,13 +12,13 @@
     <link rel="icon" href="/icons/icon-192.png" type="image/png" sizes="192x192" />
     <link rel="icon" href="/icons/icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" sizes="180x180" />
-    <link rel="stylesheet" href="/styles.css?v=0.4.9" />
+    <link rel="stylesheet" href="/styles.css?v=0.4.10" />
   </head>
   <body>
     <main class="shell">
       <section id="loginView" class="card login-card">
         <div class="login-brand">
-          <p class="eyebrow">Cursor Remote Control <span id="loginAppVersion" class="version">v0.4.9</span></p>
+          <p class="eyebrow">Cursor Remote Control <span id="loginAppVersion" class="version">v0.4.10</span></p>
           <h1 data-i18n="header.title">远程控制台</h1>
         </div>
         <h2 data-i18n="login.title">登录</h2>
@@ -252,6 +252,21 @@
                   </svg>
                 </button>
                 <button
+                  id="followUpVoiceButton"
+                  type="button"
+                  class="composer-icon-btn voice-btn"
+                  data-i18n-aria="voice.mic"
+                  data-i18n-title="voice.mic"
+                  title="语音输入"
+                  aria-label="语音输入"
+                  aria-pressed="false"
+                >
+                  <svg viewBox="0 0 20 20" aria-hidden="true">
+                    <path d="M10 2.5a2.5 2.5 0 0 0-2.5 2.5v4a2.5 2.5 0 1 0 5 0V5A2.5 2.5 0 0 0 10 2.5Z" fill="none" stroke="currentColor" stroke-width="1.6" />
+                    <path d="M4.8 9.2a5.2 5.2 0 0 0 10.4 0M10 14.4v3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
+                  </svg>
+                </button>
+                <button
                   type="button"
                   id="followUpModelTrigger"
                   class="composer-model-btn"
@@ -402,6 +417,21 @@
                   >
                     <svg viewBox="0 0 20 20" aria-hidden="true">
                       <path d="M10 4v12M4 10h12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
+                    </svg>
+                  </button>
+                  <button
+                    id="newTaskVoiceButton"
+                    type="button"
+                    class="composer-icon-btn voice-btn"
+                    data-i18n-aria="voice.mic"
+                    data-i18n-title="voice.mic"
+                    title="语音输入"
+                    aria-label="语音输入"
+                    aria-pressed="false"
+                  >
+                    <svg viewBox="0 0 20 20" aria-hidden="true">
+                      <path d="M10 2.5a2.5 2.5 0 0 0-2.5 2.5v4a2.5 2.5 0 1 0 5 0V5A2.5 2.5 0 0 0 10 2.5Z" fill="none" stroke="currentColor" stroke-width="1.6" />
+                      <path d="M4.8 9.2a5.2 5.2 0 0 0 10.4 0M10 14.4v3" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" />
                     </svg>
                   </button>
                   <button
@@ -605,11 +635,32 @@
               <input id="notifyToggle" type="checkbox" />
               <span data-i18n="settings.notify">任务完成时发送系统通知</span>
             </label>
+            <label class="inline-toggle settings-toggle">
+              <input id="voiceModeToggle" type="checkbox" />
+              <span data-i18n="settings.voice">语音模式</span>
+            </label>
+            <p class="hint" data-i18n="settings.voiceHint">开启后会朗读思考、工具和回复。任务进行中再说一句会打断当前轮。</p>
+            <label class="inline-toggle settings-toggle">
+              <input id="voiceAutoSendToggle" type="checkbox" />
+              <span data-i18n="settings.voiceAutoSend">说完自动发送</span>
+            </label>
+            <label class="inline-toggle settings-toggle">
+              <input id="voiceSpeakThinkingToggle" type="checkbox" />
+              <span data-i18n="settings.voiceSpeakThinking">朗读思考过程</span>
+            </label>
+            <label class="inline-toggle settings-toggle">
+              <input id="voiceSpeakToolsToggle" type="checkbox" />
+              <span data-i18n="settings.voiceSpeakTools">朗读工具动作</span>
+            </label>
+            <label class="inline-toggle settings-toggle">
+              <input id="voiceSpeakReplyToggle" type="checkbox" />
+              <span data-i18n="settings.voiceSpeakReply">朗读最终回复</span>
+            </label>
             <button id="installButton" class="ghost hidden" type="button" data-i18n="header.install">安装到主屏幕</button>
             <button id="logoutButton" class="ghost danger" type="button" data-i18n="header.logout">退出登录</button>
             <p class="hint settings-version">
               <span data-i18n="settings.version">版本</span>
-              <span id="appVersion" class="version">v0.4.9</span>
+              <span id="appVersion" class="version">v0.4.10</span>
             </p>
           </div>
         </div>
@@ -687,6 +738,6 @@
 
       <div id="toast" class="toast hidden"></div>
     </main>
-    <script src="/boot.js?v=0.4.9"></script>
+    <script src="/boot.js?v=0.4.10"></script>
   </body>
 </html>
