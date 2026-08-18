@@ -12,13 +12,13 @@
     <link rel="icon" href="/icons/icon-192.png" type="image/png" sizes="192x192" />
     <link rel="icon" href="/icons/icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" sizes="180x180" />
-    <link rel="stylesheet" href="/styles.css?v=0.4.10" />
+    <link rel="stylesheet" href="/styles.css?v=0.4.11" />
   </head>
   <body>
     <main class="shell">
       <section id="loginView" class="card login-card">
         <div class="login-brand">
-          <p class="eyebrow">Cursor Remote Control <span id="loginAppVersion" class="version">v0.4.10</span></p>
+          <p class="eyebrow">Cursor Remote Control <span id="loginAppVersion" class="version">v0.4.11</span></p>
           <h1 data-i18n="header.title">远程控制台</h1>
         </div>
         <h2 data-i18n="login.title">登录</h2>
@@ -639,7 +639,7 @@
               <input id="voiceModeToggle" type="checkbox" />
               <span data-i18n="settings.voice">语音模式</span>
             </label>
-            <p class="hint" data-i18n="settings.voiceHint">开启后会朗读思考、工具和回复。任务进行中再说一句会打断当前轮。</p>
+            <p class="hint" data-i18n="settings.voiceHint">开启后会朗读思考、工具和回复。进入会话不会把旧内容从头读一遍。任务进行中再说一句会打断当前轮。</p>
             <label class="inline-toggle settings-toggle">
               <input id="voiceAutoSendToggle" type="checkbox" />
               <span data-i18n="settings.voiceAutoSend">说完自动发送</span>
@@ -660,7 +660,7 @@
             <button id="logoutButton" class="ghost danger" type="button" data-i18n="header.logout">退出登录</button>
             <p class="hint settings-version">
               <span data-i18n="settings.version">版本</span>
-              <span id="appVersion" class="version">v0.4.10</span>
+              <span id="appVersion" class="version">v0.4.11</span>
             </p>
           </div>
         </div>
@@ -738,6 +738,6 @@
 
       <div id="toast" class="toast hidden"></div>
     </main>
-    <script src="/boot.js?v=0.4.10"></script>
+    <script src="/boot.js?v=0.4.11"></script>
   </body>
 </html>

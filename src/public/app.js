@@ -7,7 +7,7 @@ import {
   setLocale,
   t,
   translateApiError,
-} from "./i18n.js?v=0.4.10";
+} from "./i18n.js?v=0.4.11";
 import {
   canVoiceInput,
   cancelRecording,
@@ -24,7 +24,7 @@ import {
   transcribeWithServer,
   unlockSpeech,
   warmupMic,
-} from "./voice.js?v=0.4.10";
+} from "./voice.js?v=0.4.11";
 
 let markedRef = null;
 let purifyRef = null;
@@ -771,11 +771,12 @@ function updateVoiceUi() {
   updateComposerDock();
 }
 
-function ingestCurrentJobSpeech(job) {
+function ingestCurrentJobSpeech(job, { seedOnly = false } = {}) {
   if (state.voice.phase === "recording" || state.voice.phase === "transcribing") return;
   const prefs = loadVoicePrefs();
   ingestJobSpeech(job, {
     enabled: prefs.enabled && state.inChat,
+    seedOnly,
     speakThinking: prefs.speakThinking,
     speakTools: prefs.speakTools,
     speakReply: prefs.speakReply,
@@ -908,7 +909,7 @@ async function toggleVoiceInput(kind) {
   if (!state.voice.enabled) {
     saveVoicePrefs({ enabled: true });
     applyVoicePrefsToForm();
-    ingestCurrentJobSpeech(state.currentJob);
+    ingestCurrentJobSpeech(state.currentJob, { seedOnly: true });
   }
   try {
     unlockSpeech();
@@ -2263,6 +2264,10 @@ async function openJob(jobId) {
 
   rememberFollowUpDraft();
   const sameJob = jobId === state.currentJobId && Boolean(state.currentJob);
+  if (!sameJob) {
+    cancelSpeech();
+    resetSpeechTracking();
+  }
   state.currentJobId = jobId;
   state.chatPinnedToBottom = true;
   enterChat();
@@ -2867,6 +2872,10 @@ function renderChatMessages(job) {
 
 function renderCurrentJob(job, options = {}) {
   if (job && !state.inChat) return;
+  if (job?.id && state.currentJob?.id && job.id !== state.currentJob.id) {
+    cancelSpeech();
+    resetSpeechTracking();
+  }
   state.currentJob = job || null;
   const empty = $("#sessionEmpty");
   const summary = $("#currentJob");
@@ -2908,7 +2917,7 @@ function renderCurrentJob(job, options = {}) {
     updateFollowUpComposer(job);
     updateStopButton(job);
     updateContextHeader(job);
-    ingestCurrentJobSpeech(job);
+    ingestCurrentJobSpeech(job, { seedOnly: !options.live });
     return;
   }
 
@@ -2938,7 +2947,7 @@ function renderCurrentJob(job, options = {}) {
   updateStopButton(job);
   updateContextHeader(job);
   updateOnboardingVisibility();
-  ingestCurrentJobSpeech(job);
+  ingestCurrentJobSpeech(job, { seedOnly: !options.live });
 }
 
 let currentJobPollInFlight = false;
@@ -3300,6 +3309,7 @@ async function stopCurrentJob() {
   state.stoppingJobIds.add(job.id);
   updateStopButton(job);
   try {
+    cancelSpeech();
     const { job: updatedJob } = await api(`/api/jobs/${job.id}/cancel`, {
       method: "POST",
       body: "{}",
@@ -4641,7 +4651,7 @@ on("#voiceModeToggle", "change", (event) => {
   if (enabled) {
     unlockSpeech();
     warmupMic().catch(() => {});
-    ingestCurrentJobSpeech(state.currentJob);
+    ingestCurrentJobSpeech(state.currentJob, { seedOnly: true });
   } else {
     cancelSpeech();
     resetSpeechTracking();

@@ -38,6 +38,7 @@ let speechUnlocked = false;
 let speaking = false;
 let speakQueue = [];
 let seededJobId = "";
+let seededSparse = false;
 const spokenOffsets = new Map();
 const spokenTools = new Set();
 const skippedCodeTurns = new Set();
@@ -436,6 +437,7 @@ export function cancelSpeech() {
 
 export function resetSpeechTracking() {
   seededJobId = "";
+  seededSparse = false;
   spokenOffsets.clear();
   spokenTools.clear();
   skippedCodeTurns.clear();
@@ -472,12 +474,17 @@ function speakRoleDelta(job, turn, role, { flush, maxTotal, maxSentence, lang })
 }
 
 export function ingestJobSpeech(job, options = {}) {
-  const { enabled, speakThinking, speakTools, speakReply, lang, t, onSkipCode } = options;
+  const { enabled, speakThinking, speakTools, speakReply, lang, t, onSkipCode, seedOnly = false } = options;
   if (!enabled || !job) return;
 
-  if (seededJobId !== job.id) {
+  const switched = seededJobId !== job.id;
+  if (switched) cancelSpeech();
+
+  // 列表摘要没有 logs；进入会话后的首包快照必须只对齐进度，不能把已有内容当新增量朗读。
+  if (switched || seedOnly || seededSparse) {
     seedJob(job);
     seededJobId = job.id;
+    seededSparse = !Array.isArray(job.logs);
     return;
   }
 
