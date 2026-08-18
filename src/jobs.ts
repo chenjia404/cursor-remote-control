@@ -7,7 +7,7 @@ import { config } from "./config.js";
 import { getDb, withTransaction } from "./db.js";
 import type { JobImageMeta } from "./jobImages.js";
 import { formatModelSelection, type AgentModelSelection } from "./models.js";
-import type { ProjectInfo } from "./projects.js";
+import { assertPathAllowed, type ProjectInfo } from "./projects.js";
 
 export type JobStatus = "queued" | "running" | "finished" | "error" | "cancelled";
 
@@ -743,7 +743,7 @@ export function createJob(input: {
     project: {
       id: input.project.id,
       name: input.project.name,
-      path: input.project.path,
+      path: assertPathAllowed(input.project.path),
     },
     prompt: input.prompt,
     promptSummary: summarizePrompt(input.prompt),
@@ -754,7 +754,10 @@ export function createJob(input: {
     sourceIp: input.sourceIp,
     mode: input.mode,
     model: input.model,
-    extraProjects: input.extraProjects,
+    extraProjects: input.extraProjects?.map((item) => ({
+      ...item,
+      path: assertPathAllowed(item.path),
+    })),
     loadLocalSettings: input.loadLocalSettings,
     sandbox: input.sandbox,
     autoReview: input.autoReview,
@@ -767,7 +770,12 @@ export function createJob(input: {
 
   jobs.set(job.id, job);
   const source = input.scheduleId ? "由定时规则触发，" : "";
-  appendJobLog(job.id, "info", `任务已创建（${source}${describeRunSettings(input.mode, input.model)}），等待执行。`, turn.id);
+  appendJobLog(
+    job.id,
+    "info",
+    `任务已创建（${source}${describeRunSettings(input.mode, input.model)}）。工作目录：${job.project.path}`,
+    turn.id,
+  );
   schedulePersist(true);
   return job;
 }

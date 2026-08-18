@@ -99,6 +99,10 @@ export async function resolveExtraProjects(
   return extra;
 }
 
+function pathKey(value: string): string {
+  return value.replace(/[/\\]+/g, "\\").toLowerCase();
+}
+
 export function extraWorkspacePaths(extraProjects: ExtraProjectRef[] | undefined): string[] {
   const paths: string[] = [];
   for (const project of extraProjects ?? []) {
@@ -109,6 +113,24 @@ export function extraWorkspacePaths(extraProjects: ExtraProjectRef[] | undefined
     }
   }
   return paths;
+}
+
+/** 任务初始化用的工作区：主目录必须是用户选中的项目，附加目录去重且不含主目录。 */
+export function resolveAgentWorkspace(
+  projectPath: string,
+  extraProjects?: ExtraProjectRef[],
+): { cwd: string; dirs: string[] } {
+  const cwd = assertPathAllowed(projectPath);
+  const dirs: string[] = [];
+  const seen = new Set([pathKey(cwd)]);
+  for (const extra of extraWorkspacePaths(extraProjects)) {
+    const key = pathKey(extra);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    dirs.push(extra);
+  }
+
+  return { cwd, dirs };
 }
 
 export function resolveRunOptions(input: {

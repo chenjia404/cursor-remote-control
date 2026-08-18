@@ -1047,6 +1047,14 @@ button.small {
   word-break: break-all;
 }
 
+.sheet-project-path {
+  color: #94a3b8;
+  font-size: 0.78rem;
+  font-weight: 400;
+  margin: 0.2rem 0 0;
+  word-break: break-all;
+}
+
 .mode-segment {
   background: rgba(2, 6, 23, 0.7);
   border: 1px solid #334155;

@@ -7,7 +7,7 @@ import {
   setLocale,
   t,
   translateApiError,
-} from "./i18n.js?v=0.4.3";
+} from "./i18n.js?v=0.4.4";
 
 let markedRef = null;
 let purifyRef = null;
@@ -101,6 +101,7 @@ const state = {
   jobs: [],
   projects: [],
   selectedProjectId: "",
+  submitProjectId: "",
   currentJobId: "",
   currentJob: null,
   inChat: false,
@@ -399,7 +400,8 @@ function collectDisallowedTools(kind) {
 function renderExtraWorkspaces() {
   const root = $("#extraWorkspaceList");
   if (!root) return;
-  const others = state.projects.filter((project) => project.id !== state.selectedProjectId);
+  const primaryId = state.submitProjectId || state.selectedProjectId;
+  const others = state.projects.filter((project) => project.id !== primaryId);
   if (others.length === 0) {
     root.innerHTML = `<p class="hint">${escapeHtml(t("submit.extraWorkspacesEmpty"))}</p>`;
     return;
@@ -445,7 +447,9 @@ function applyAgentOptions(kind, options) {
     return;
   }
   if (kind !== "followUp") {
-    state.extraProjectIds = (options.extraProjectIds || []).filter((id) => id !== state.selectedProjectId);
+    state.extraProjectIds = (options.extraProjectIds || []).filter(
+      (id) => id !== (state.submitProjectId || state.selectedProjectId),
+    );
     renderExtraWorkspaces();
   }
 }
@@ -1081,21 +1085,37 @@ function ensureSelectedProject() {
     state.selectedProjectId = saved;
     return;
   }
-  if (state.projects[0]) {
+  if (state.projects.length === 1) {
     saveSelectedProjectId(state.projects[0].id);
+    return;
   }
+  if (state.selectedProjectId) saveSelectedProjectId("");
+}
+
+function selectedProject() {
+  return findProject(state.submitProjectId) || findProject(state.selectedProjectId);
 }
 
 function selectedProjectName() {
   return findProject(state.selectedProjectId)?.name || t("project.noneSelected");
 }
 
+function setProjectPathLabel(elementId, projectPath) {
+  const el = $(`#${elementId}`);
+  if (!el) return;
+  el.textContent = projectPath || "";
+  el.classList.toggle("hidden", !projectPath);
+}
+
 function updateNewTaskProjectLabel() {
-  const projectName = selectedProjectName();
+  const project = selectedProject();
+  const projectName = project?.name || t("project.noneSelected");
   const label = $("#newTaskProjectName");
   if (label) label.textContent = projectName;
   const current = $("#projectCurrentName");
-  if (current) current.textContent = projectName;
+  if (current) current.textContent = findProject(state.selectedProjectId)?.name || t("project.noneSelected");
+  setProjectPathLabel("newTaskProjectPath", project?.path);
+  setProjectPathLabel("projectCurrentPath", findProject(state.selectedProjectId)?.path);
   renderExtraWorkspaces();
 }
 
@@ -1262,6 +1282,8 @@ async function confirmBrowseSelection(projectPath) {
     });
     await refreshData();
     saveSelectedProjectId(project.id);
+    renderProjectList();
+    updateContextHeader();
     setBrowseOverlayOpen(false);
     showToast(t("project.confirmed", { name: project.name }));
     switchTab("projects");
@@ -3287,6 +3309,7 @@ function openNewTaskSheet() {
     return;
   }
   ensureSelectedProject();
+  state.submitProjectId = state.selectedProjectId;
   updateNewTaskProjectLabel();
   setModeSelect($("#modeSelect"), loadSavedMode());
   applyModelSelection("submit", loadSavedModel());
@@ -3304,7 +3327,8 @@ async function submitNewJob() {
 
   try {
     const prompt = $("#promptInput").value.trim();
-    const projectId = state.selectedProjectId;
+    const project = selectedProject();
+    const projectId = project?.id || "";
     if (!projectId) {
       showToast(t("toast.selectProject"));
       switchTab("projects");
@@ -3332,7 +3356,7 @@ async function submitNewJob() {
         mode,
         model,
         images,
-        extraProjectIds: agentOptions.extraProjectIds,
+        extraProjectIds: agentOptions.extraProjectIds.filter((id) => id !== projectId),
         loadLocalSettings: agentOptions.loadLocalSettings,
         sandbox: agentOptions.sandbox,
         autoReview: agentOptions.autoReview,

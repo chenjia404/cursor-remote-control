@@ -63,7 +63,16 @@ export function pathFromProjectId(projectId: string): string {
 }
 
 export function assertPathAllowed(projectPath: string): string {
-  const resolved = normalizePath(projectPath);
+  if (typeof projectPath !== "string") {
+    throw new Error("项目路径无效");
+  }
+
+  const trimmed = projectPath.trim();
+  if (!trimmed) {
+    throw new Error("项目路径无效");
+  }
+
+  const resolved = normalizePath(trimmed);
   const allowed = config.projectRoots.some((root) => isWithinRoot(resolved, root));
 
   if (!allowed) {

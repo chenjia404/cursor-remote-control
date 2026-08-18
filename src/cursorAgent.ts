@@ -12,8 +12,8 @@ import {
   type TokenUsage,
 } from "@cursor/sdk";
 import {
-  extraWorkspacePaths,
   mergeDisallowedTools,
+  resolveAgentWorkspace,
   settingSourcesForRun,
   type AgentRunOptions,
 } from "./agentOptions.js";
@@ -194,17 +194,18 @@ function buildAgentCreateOptions(
   mode: AgentModeOption,
 ): AgentOptions {
   const runOptions = resolveTurnRunOptions(job, turn);
-  const extraDirs = extraWorkspacePaths(runOptions.extraProjects);
+  const workspace = resolveAgentWorkspace(job.project.path, runOptions.extraProjects);
   const disallowedTools = mergeDisallowedTools(runOptions.disallowedTools);
 
   return {
     apiKey: requireCursorApiKey(),
     model,
     mode,
+    name: job.project.name,
     ...(disallowedTools ? { disallowedTools } : {}),
     local: {
-      cwd: job.project.path,
-      ...(extraDirs.length ? { dirs: extraDirs } : {}),
+      cwd: workspace.cwd,
+      ...(workspace.dirs.length ? { dirs: workspace.dirs } : {}),
       settingSources: settingSourcesForRun(runOptions.loadLocalSettings),
       ...(runOptions.sandbox ? { sandboxOptions: { enabled: true } } : {}),
       ...(runOptions.autoReview ? { autoReview: true } : {}),
@@ -231,12 +232,20 @@ async function createAgentForJob(job: JobRecord, turn: JobTurn): Promise<Disposa
   const mode = resolveTurnMode(job, turn);
   const modelLabel = formatModelSelection(selection);
   const options = buildAgentCreateOptions(job, turn, model, mode);
+  const cwd = options.local?.cwd;
+  if (!cwd) throw new Error("任务工作目录无效");
 
   if (job.agentId) {
-    appendJobLog(job.id, "info", `继续已有 Agent：${job.agentId}（${runSettingsLabel(mode, modelLabel)}）`, turn.id);
+    appendJobLog(
+      job.id,
+      "info",
+      `继续已有 Agent：${job.agentId}（${runSettingsLabel(mode, modelLabel)}；工作目录 ${cwd}）`,
+      turn.id,
+    );
     return (await Agent.resume(job.agentId, options)) as DisposableAgent;
   }
 
+  appendJobLog(job.id, "info", `正在初始化 Agent，工作目录：${cwd}`, turn.id);
   return (await Agent.create(options)) as DisposableAgent;
 }
 

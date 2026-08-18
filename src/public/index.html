@@ -12,13 +12,13 @@
     <link rel="icon" href="/icons/icon-192.png" type="image/png" sizes="192x192" />
     <link rel="icon" href="/icons/icon.svg" type="image/svg+xml" />
     <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png" sizes="180x180" />
-    <link rel="stylesheet" href="/styles.css?v=0.4.3" />
+    <link rel="stylesheet" href="/styles.css?v=0.4.4" />
   </head>
   <body>
     <main class="shell">
       <section id="loginView" class="card login-card">
         <div class="login-brand">
-          <p class="eyebrow">Cursor Remote Control <span id="loginAppVersion" class="version">v0.4.3</span></p>
+          <p class="eyebrow">Cursor Remote Control <span id="loginAppVersion" class="version">v0.4.4</span></p>
           <h1 data-i18n="header.title">远程控制台</h1>
         </div>
         <h2 data-i18n="login.title">登录</h2>
@@ -147,6 +147,7 @@
                     <p id="projectCurrentName" class="sheet-project-name" data-i18n="project.noneSelected">
                       暂无已选项目，请先浏览并确认
                     </p>
+                    <p id="projectCurrentPath" class="sheet-project-path hidden"></p>
                   </div>
                   <button id="browseOpenButton" type="button" data-i18n="submit.browseOpen">浏览目录</button>
                   <label>
@@ -288,6 +289,7 @@
               <div>
                 <span class="sheet-label" data-i18n="submit.project">项目</span>
                 <p id="newTaskProjectName" class="sheet-project-name" data-i18n="project.noneSelected">暂无已选项目</p>
+                <p id="newTaskProjectPath" class="sheet-project-path hidden"></p>
               </div>
               <button id="newTaskChangeProjectButton" type="button" class="ghost small" data-i18n="task.changeProject">
                 更换
@@ -523,7 +525,7 @@
             <button id="logoutButton" class="ghost danger" type="button" data-i18n="header.logout">退出登录</button>
             <p class="hint settings-version">
               <span data-i18n="settings.version">版本</span>
-              <span id="appVersion" class="version">v0.4.3</span>
+              <span id="appVersion" class="version">v0.4.4</span>
             </p>
           </div>
         </div>
@@ -601,6 +603,6 @@
 
       <div id="toast" class="toast hidden"></div>
     </main>
-    <script src="/boot.js?v=0.4.3"></script>
+    <script src="/boot.js?v=0.4.4"></script>
   </body>
 </html>
