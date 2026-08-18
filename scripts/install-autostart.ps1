@@ -22,7 +22,6 @@ if ($DelaySeconds -lt 0) {
 }
 
 $ProjectRoot = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
-$StartScript = Join-Path $PSScriptRoot "watchdog.ps1"
 $LogDir = Join-Path $ProjectRoot "data"
 $NodePathFile = Join-Path $LogDir "autostart-node-path.txt"
 $ServerEntry = Join-Path $ProjectRoot "dist\src\server.js"
@@ -87,18 +86,20 @@ if (-not (Test-Path -LiteralPath $ServerEntry)) {
   }
 }
 
-# 优先用当前 pwsh 的真实路径，避免 Store 别名在计划任务里失效
-$pwsh = Join-Path $PSHOME "pwsh.exe"
-if (-not (Test-Path -LiteralPath $pwsh)) {
-  $pwsh = (Get-Command pwsh -ErrorAction SilentlyContinue)?.Source
+# 计划任务必须走系统自带的 powershell.exe。
+# Store 版 pwsh 的 WindowsApps 版本目录会随升级消失，写死 7.x.y 路径会报 0x80070002，守护再也拉不起来。
+$launcher = Join-Path $PSScriptRoot "launch-watchdog.ps1"
+$winPs = Join-Path $env:SystemRoot "System32\WindowsPowerShell\v1.0\powershell.exe"
+if (-not (Test-Path -LiteralPath $winPs)) {
+  throw "未找到系统 Windows PowerShell：$winPs"
 }
-if (-not $pwsh) {
-  throw "未找到 PowerShell 7 (pwsh)。请先安装后再注册自启。"
+if (-not (Test-Path -LiteralPath $launcher)) {
+  throw "未找到守护启动器：$launcher"
 }
 
 # 触发器延迟启动；脚本本身 DelaySeconds=0，避免重复等待
-$argument = "-WindowStyle Hidden -NoProfile -ExecutionPolicy Bypass -File `"$StartScript`" -DelaySeconds 0 -NodePath `"$resolvedNode`""
-$action = New-ScheduledTaskAction -Execute $pwsh -Argument $argument -WorkingDirectory $ProjectRoot
+$argument = "-NoProfile -ExecutionPolicy Bypass -File `"$launcher`" -DelaySeconds 0 -NodePath `"$resolvedNode`""
+$action = New-ScheduledTaskAction -Execute $winPs -Argument $argument -WorkingDirectory $ProjectRoot
 
 $logonTrigger = New-ScheduledTaskTrigger -AtLogOn -User $env:USERNAME
 $logonTrigger.Delay = "PT${DelaySeconds}S"
@@ -137,6 +138,6 @@ try {
 
 Write-Host "已注册计划任务: $TaskName"
 Write-Host "触发条件: 用户 $env:USERNAME 登录后延迟 ${DelaySeconds}s；守护退出后每 1 分钟补拉"
-Write-Host "启动脚本: $StartScript（守护进程，服务挂了会自动拉起）"
+Write-Host "启动脚本: $launcher → watchdog.ps1（守护进程，服务挂了会自动拉起）"
 Write-Host "取消自启: pnpm autostart:uninstall"
 Write-Host "立即挂上守护（不停现有服务）: pnpm autostart:watch"
